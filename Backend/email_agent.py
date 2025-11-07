@@ -363,10 +363,10 @@ class EmailAgent:
                                 if analysis_result.get('success'):
                                     print(f"🧠 AI analysis saved for: {email.get('subject', 'No subject')[:40]}")
                         
-                        # Auto-reply if enabled and appropriate (only for active account)
-                        if should_auto_reply and self.auto_reply_enabled and self._should_auto_reply(email, analysis):
+                        # Auto-reply if enabled and appropriate (all accounts)
+                        if should_auto_reply and self.auto_reply_enabled and self._should_auto_reply(email, analysis, account_id):
                             try:
-                                self._send_auto_reply(email, analysis)
+                                self._send_auto_reply(email, analysis, account_id)
                             except Exception as e:
                                 print(f"⚠ Auto-reply failed: {e}")
                         
@@ -737,13 +737,14 @@ class EmailAgent:
         """Send an email"""
         return self.sender.send_email(to=to, subject=subject, body=body, **kwargs)
     
-    def _should_auto_reply(self, email: Dict, analysis: Dict) -> bool:
+    def _should_auto_reply(self, email: Dict, analysis: Dict, account_id: Optional[int]) -> bool:
         """
         Determine if we should automatically reply to this email
         
         Args:
             email: Email data
             analysis: AI analysis results
+            account_id: Account ID that received the email
             
         Returns:
             bool: True if we should auto-reply, False otherwise
@@ -757,10 +758,13 @@ class EmailAgent:
         
         # 2. Email is from the same account (prevent self-reply loops)
         from_email = email.get('from', '').lower()
-        if self.account_manager:
-            active_account = self.account_manager.get_active_account()
-            if active_account:
-                account_email = active_account.get('email', '').lower()
+        if self.account_manager and account_id:
+            # Get the account that received the email
+            all_accounts = self.account_manager.get_all_accounts_with_credentials()
+            receiving_account = next((acc for acc in all_accounts if acc.get('id') == account_id), None)
+            
+            if receiving_account:
+                account_email = receiving_account.get('email', '').lower()
                 
                 # Extract email address from "Name <email@domain.com>" format
                 import re
@@ -794,26 +798,25 @@ class EmailAgent:
         # 6. Check MongoDB - Have we already replied to this email?
         if self.mongodb_manager and self.mongodb_manager.replies_collection is not None:
             message_id = email.get('message_id')
-            if message_id and self.account_manager:
-                active_account = self.account_manager.get_active_account()
-                if active_account:
-                    existing_reply = self.mongodb_manager.get_reply(message_id, active_account['id'])
-                    if existing_reply:
-                        sent_at = existing_reply.get('sent_at', 'unknown time')
-                        print(f"⏭️  Skipping auto-reply: Already replied on {sent_at}")
-                        return False
+            if message_id and account_id:
+                existing_reply = self.mongodb_manager.get_reply(message_id, account_id)
+                if existing_reply:
+                    sent_at = existing_reply.get('sent_at', 'unknown time')
+                    print(f"⏭️  Skipping auto-reply: Already replied on {sent_at}")
+                    return False
         
         # All checks passed - auto-reply is appropriate
         print(f"✅ Auto-reply approved for: {email.get('subject', 'No subject')[:40]}")
         return True
     
-    def _send_auto_reply(self, email: Dict, analysis: Dict):
+    def _send_auto_reply(self, email: Dict, analysis: Dict, account_id: Optional[int]):
         """
         Send an automatic reply based on AI analysis
         
         Args:
             email: Email data
             analysis: AI analysis results
+            account_id: Account ID that received the email (will send reply from this account)
         """
         from_address = email.get('from', '')
         subject = email.get('subject', 'No Subject')
@@ -823,23 +826,35 @@ class EmailAgent:
             print("⚠️  Missing from_address or suggested_response")
             return
         
-        # Update sender with active account credentials
-        if self.account_manager:
-            active_account = self.account_manager.get_active_account()
-            if active_account:
-                self.sender.email_address = active_account['email']
-                self.sender.password = active_account.get('password', '')
-                self.sender.smtp_server = active_account.get('smtp_server', 'smtp.gmail.com')
-                self.sender.smtp_port = active_account.get('smtp_port', 587)
-                
-                # If OAuth credentials are available, use them for Gmail API
-                oauth_creds = active_account.get('oauth_credentials')
-                if oauth_creds:
-                    self.sender.set_oauth_credentials(oauth_creds)
-                else:
-                    # Clear OAuth credentials if not available
-                    self.sender.oauth_credentials = None
-                    self.sender.gmail_service = None
+        # Get the account that received the email (not the active account)
+        reply_account = None
+        if self.account_manager and account_id:
+            # Get account by ID with credentials
+            all_accounts = self.account_manager.get_all_accounts_with_credentials()
+            reply_account = next((acc for acc in all_accounts if acc.get('id') == account_id), None)
+        
+        # Fallback to active account if account_id not found
+        if not reply_account and self.account_manager:
+            reply_account = self.account_manager.get_active_account()
+        
+        if not reply_account:
+            print("⚠️  No account found to send auto-reply")
+            return
+        
+        # Update sender with the account that received the email
+        self.sender.email_address = reply_account['email']
+        self.sender.password = reply_account.get('password', '')
+        self.sender.smtp_server = reply_account.get('smtp_server', 'smtp.gmail.com')
+        self.sender.smtp_port = reply_account.get('smtp_port', 587)
+        
+        # If OAuth credentials are available, use them for Gmail API
+        oauth_creds = reply_account.get('oauth_credentials')
+        if oauth_creds:
+            self.sender.set_oauth_credentials(oauth_creds)
+        else:
+            # Clear OAuth credentials if not available
+            self.sender.oauth_credentials = None
+            self.sender.gmail_service = None
         
         # Compose reply
         reply_subject = f"Re: {subject}" if not subject.lower().startswith('re:') else subject
@@ -860,22 +875,20 @@ class EmailAgent:
             # Save reply to MongoDB
             if self.mongodb_manager and self.mongodb_manager.replies_collection is not None:
                 email_message_id = email.get('message_id')
-                if email_message_id and self.account_manager:
-                    active_account = self.account_manager.get_active_account()
-                    if active_account:
-                        reply_data = {
-                            'to': from_address,
-                            'subject': reply_subject,
-                            'body': suggested_response,
-                            'success': True
-                        }
-                        result = self.mongodb_manager.save_reply(
-                            email_message_id,
-                            active_account['id'],
-                            reply_data
-                        )
-                        if result.get('success'):
-                            print(f"💾 Auto-reply saved to MongoDB")
+                if email_message_id and account_id:
+                    reply_data = {
+                        'to': from_address,
+                        'subject': reply_subject,
+                        'body': suggested_response,
+                        'success': True
+                    }
+                    result = self.mongodb_manager.save_reply(
+                        email_message_id,
+                        account_id,
+                        reply_data
+                    )
+                    if result.get('success'):
+                        print(f"💾 Auto-reply saved to MongoDB")
         else:
             print(f"❌ Failed to send auto-reply to {from_address}")
     
