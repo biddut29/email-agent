@@ -61,3 +61,10 @@ GMAIL_CLIENT_SECRET = os.getenv("GMAIL_CLIENT_SECRET", "")
 GMAIL_USE_API = os.getenv("GMAIL_USE_API", "False").lower() == "true"
 GMAIL_PUBSUB_TOPIC = os.getenv("GMAIL_PUBSUB_TOPIC", "")  # Format: projects/PROJECT_ID/topics/TOPIC_NAME
 
+# OAuth/SSO Settings
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
+GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8000/api/auth/callback")
+SESSION_SECRET = os.getenv("SESSION_SECRET", "change-this-to-a-random-secret-key")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+

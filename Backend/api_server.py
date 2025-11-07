@@ -3,16 +3,18 @@ FastAPI Server for Email Agent
 Provides REST API endpoints for the frontend
 """
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Cookie
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, RedirectResponse
 from pydantic import BaseModel, EmailStr
 from typing import List, Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timedelta
 import uvicorn
 import asyncio
 import json as json_lib
 import os
+import secrets
+from itsdangerous import URLSafeTimedSerializer
 
 from email_agent import EmailAgent
 from email_receiver import EmailReceiver
@@ -23,10 +25,20 @@ from account_manager import AccountManager
 from vector_store import vector_store
 from mongodb_manager import mongodb_manager
 from gmail_api_client import GmailAPIClient
+from auth_manager import AuthManager
 import config
 
 # Initialize account manager with MongoDB (will be set up in startup)
 account_manager = None
+
+# Initialize auth manager
+auth_manager = AuthManager()
+
+# Session serializer
+session_serializer = URLSafeTimedSerializer(config.SESSION_SECRET)
+
+# Store active sessions (in production, use Redis or database)
+active_sessions = {}
 
 
 # Initialize FastAPI app
@@ -217,6 +229,164 @@ async def health_check():
         "ai_enabled": email_agent.ai_enabled if email_agent else False,
         "accounts_count": account_manager.get_account_count()
     }
+
+
+# ============================================================================
+# AUTHENTICATION ENDPOINTS
+# ============================================================================
+
+@app.get("/api/auth/login")
+async def login():
+    """Initiate Google OAuth login"""
+    try:
+        # Validate OAuth configuration
+        if not auth_manager.client_id or not auth_manager.client_secret:
+            raise HTTPException(
+                status_code=500, 
+                detail="OAuth credentials not configured. Please check GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in .env"
+            )
+        
+        state = secrets.token_urlsafe(32)
+        auth_url, _ = auth_manager.get_authorization_url(state=state)
+        print(f"✓ OAuth login initiated - Client ID: {auth_manager.client_id[:20]}...")
+        return {"success": True, "auth_url": auth_url, "state": state}
+    except ValueError as e:
+        print(f"❌ OAuth configuration error: {e}")
+        raise HTTPException(status_code=500, detail=f"OAuth configuration error: {str(e)}")
+    except Exception as e:
+        print(f"❌ Login error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to initiate login: {str(e)}")
+
+
+@app.get("/api/auth/callback")
+async def oauth_callback(code: str, state: Optional[str] = None):
+    """Handle OAuth callback and create session"""
+    try:
+        # Exchange code for credentials
+        credentials = auth_manager.exchange_code_for_credentials(code)
+        
+        # Get user info
+        user_info = auth_manager.get_user_info(credentials)
+        email = user_info.get('email')
+        
+        if not email:
+            raise HTTPException(status_code=400, detail="Failed to get user email")
+        
+        # Convert credentials to dict for storage
+        credentials_dict = auth_manager.credentials_to_dict(credentials)
+        
+        # Create or update account
+        account = account_manager.find_account_by_email(email)
+        if not account:
+            # Create new account from OAuth
+            account_id = account_manager.create_account_from_oauth(
+                email=email,
+                name=user_info.get('name', ''),
+                credentials_dict=credentials_dict
+            )
+        else:
+            # Update existing account with OAuth credentials
+            account_id = account['id']
+            account_manager.update_account_oauth_credentials(
+                account_id=account_id,
+                credentials_dict=credentials_dict
+            )
+        
+        # Activate this account
+        account_manager.set_active_account(account_id)
+        
+        # Create session token
+        session_data = {
+            'account_id': account_id,
+            'email': email,
+            'name': user_info.get('name', ''),
+            'created_at': datetime.utcnow().isoformat()
+        }
+        session_token = session_serializer.dumps(session_data)
+        
+        # Store session
+        active_sessions[session_token] = {
+            'account_id': account_id,
+            'email': email,
+            'name': user_info.get('name', ''),
+            'credentials': credentials_dict,
+            'expires_at': (datetime.utcnow() + timedelta(days=7)).isoformat()
+        }
+        
+        # Redirect to frontend with token
+        frontend_url = config.FRONTEND_URL
+        return RedirectResponse(
+            url=f"{frontend_url}/auth/callback?token={session_token}",
+            status_code=302
+        )
+    except Exception as e:
+        print(f"❌ OAuth callback error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Authentication failed: {str(e)}")
+
+
+@app.get("/api/auth/me")
+async def get_current_user(request: Request, session_token: Optional[str] = Cookie(None)):
+    """Get current authenticated user"""
+    # Also check Authorization header as fallback
+    if not session_token:
+        # Try to get from Authorization header
+        auth_header = request.headers.get('Authorization', '')
+        if auth_header and auth_header.startswith('Bearer '):
+            session_token = auth_header.replace('Bearer ', '')
+        # Also try query parameter
+        if not session_token:
+            session_token = request.query_params.get('token')
+    
+    if not session_token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    try:
+        session_data = session_serializer.loads(session_token, max_age=604800)  # 7 days
+        session = active_sessions.get(session_token)
+        
+        if not session:
+            raise HTTPException(status_code=401, detail="Session expired")
+        
+        return {
+            "success": True,
+            "user": {
+                "account_id": session['account_id'],
+                "email": session['email'],
+                "name": session.get('name', '')
+            }
+        }
+    except Exception as e:
+        print(f"❌ Auth check error: {e}")
+        raise HTTPException(status_code=401, detail="Invalid session")
+
+
+@app.post("/api/auth/logout")
+async def logout(session_token: Optional[str] = Cookie(None)):
+    """Logout user"""
+    if session_token and session_token in active_sessions:
+        del active_sessions[session_token]
+    
+    return {"success": True, "message": "Logged out successfully"}
+
+
+# Helper function to get current user from session
+def get_current_account_id(session_token: Optional[str] = Cookie(None)) -> Optional[int]:
+    """Get account ID from session token"""
+    if not session_token:
+        return None
+    
+    try:
+        session = active_sessions.get(session_token)
+        if session:
+            return session['account_id']
+    except:
+        pass
+    
+    return None
 
 
 # Get emails

@@ -626,9 +626,18 @@ class EmailAgent:
             active_account = self.account_manager.get_active_account()
             if active_account:
                 self.sender.email_address = active_account['email']
-                self.sender.password = active_account['password']
-                self.sender.smtp_server = active_account['smtp_server']
-                self.sender.smtp_port = active_account['smtp_port']
+                self.sender.password = active_account.get('password', '')
+                self.sender.smtp_server = active_account.get('smtp_server', 'smtp.gmail.com')
+                self.sender.smtp_port = active_account.get('smtp_port', 587)
+                
+                # If OAuth credentials are available, use them for Gmail API
+                oauth_creds = active_account.get('oauth_credentials')
+                if oauth_creds:
+                    self.sender.set_oauth_credentials(oauth_creds)
+                else:
+                    # Clear OAuth credentials if not available
+                    self.sender.oauth_credentials = None
+                    self.sender.gmail_service = None
         
         # Compose reply
         reply_subject = f"Re: {subject}" if not subject.lower().startswith('re:') else subject

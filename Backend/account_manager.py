@@ -348,6 +348,93 @@ class AccountManager:
         except Exception as e:
             return {"error": str(e)}
     
+    def find_account_by_email(self, email: str) -> Optional[Dict]:
+        """Find account by email (alias for get_account_by_email)"""
+        return self.get_account_by_email(email)
+    
+    def create_account_from_oauth(self, email: str, name: str, credentials_dict: Dict) -> int:
+        """Create account from OAuth credentials"""
+        if self.accounts_collection is None:
+            raise ValueError("MongoDB not available")
+        
+        try:
+            # Check if account already exists
+            existing = self.accounts_collection.find_one({"email": email})
+            if existing:
+                account_id = existing.get('id')
+                if not account_id:
+                    account_id = self._get_next_id()
+                    self.accounts_collection.update_one(
+                        {"email": email},
+                        {"$set": {"id": account_id}}
+                    )
+                
+                # Update with OAuth credentials
+                self.accounts_collection.update_one(
+                    {"email": email},
+                    {"$set": {
+                        "oauth_credentials": credentials_dict,
+                        "oauth_name": name,
+                        "oauth_enabled": True,
+                        "updated_at": datetime.utcnow()
+                    }}
+                )
+                
+                # If no active account, make this one active
+                if not self.get_active_account():
+                    self.set_active_account(account_id)
+                
+                print(f"✓ OAuth account updated: {email} (ID: {account_id})")
+                return account_id
+            
+            # Create new account
+            account_id = self._get_next_id()
+            account_doc = {
+                "id": account_id,
+                "email": email,
+                "oauth_credentials": credentials_dict,
+                "oauth_name": name,
+                "oauth_enabled": True,
+                "imap_server": "imap.gmail.com",
+                "imap_port": 993,
+                "smtp_server": "smtp.gmail.com",
+                "smtp_port": 587,
+                "is_active": False,
+                "created_at": datetime.utcnow()
+            }
+            
+            self.accounts_collection.insert_one(account_doc)
+            
+            # If this is the first account, make it active
+            if self.get_account_count() == 1:
+                self.set_active_account(account_id)
+            
+            print(f"✓ OAuth account created: {email} (ID: {account_id})")
+            return account_id
+            
+        except Exception as e:
+            print(f"Error creating OAuth account: {e}")
+            raise
+    
+    def update_account_oauth_credentials(self, account_id: int, credentials_dict: Dict):
+        """Update account with OAuth credentials"""
+        if self.accounts_collection is None:
+            raise ValueError("MongoDB not available")
+        
+        try:
+            self.accounts_collection.update_one(
+                {"id": account_id},
+                {"$set": {
+                    "oauth_credentials": credentials_dict,
+                    "oauth_enabled": True,
+                    "updated_at": datetime.utcnow()
+                }}
+            )
+            print(f"✓ OAuth credentials updated for account ID: {account_id}")
+        except Exception as e:
+            print(f"Error updating OAuth credentials: {e}")
+            raise
+    
     def _format_account(self, account_doc: Dict) -> Dict:
         """Format MongoDB document to match expected format"""
         # Handle account ID - ensure it's an integer
@@ -379,6 +466,10 @@ class AccountManager:
         # Include password if it exists (for internal use)
         if 'password' in account_doc:
             formatted['password'] = account_doc['password']
+        
+        # Include OAuth credentials if they exist (for Gmail API sending)
+        if 'oauth_credentials' in account_doc:
+            formatted['oauth_credentials'] = account_doc['oauth_credentials']
         
         return formatted
 

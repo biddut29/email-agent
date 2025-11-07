@@ -1,5 +1,5 @@
 """
-Email Sender Module - Handles sending emails via SMTP
+Email Sender Module - Handles sending emails via SMTP or Gmail API
 """
 
 import smtplib
@@ -8,18 +8,35 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email import encoders
 import os
-from typing import List, Optional
+import base64
+from typing import List, Optional, Dict
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 import config
 
 
 class EmailSender:
-    """Handles sending emails via SMTP"""
+    """Handles sending emails via SMTP or Gmail API (OAuth)"""
     
     def __init__(self):
         self.email_address = config.EMAIL_ADDRESS
         self.password = config.EMAIL_PASSWORD
         self.smtp_server = config.SMTP_SERVER
         self.smtp_port = config.SMTP_PORT
+        self.oauth_credentials = None
+        self.gmail_service = None
+    
+    def set_oauth_credentials(self, credentials_dict: Dict):
+        """Set OAuth credentials for Gmail API sending"""
+        from auth_manager import AuthManager
+        auth_manager = AuthManager()
+        self.oauth_credentials = auth_manager.dict_to_credentials(credentials_dict)
+        try:
+            self.gmail_service = build('gmail', 'v1', credentials=self.oauth_credentials)
+        except Exception as e:
+            print(f"⚠️  Failed to build Gmail service: {e}")
+            self.gmail_service = None
     
     def send_email(self, 
                    to: str or List[str],
@@ -30,7 +47,7 @@ class EmailSender:
                    attachments: Optional[List[str]] = None,
                    html: bool = False) -> bool:
         """
-        Send an email
+        Send an email via Gmail API (if OAuth) or SMTP
         
         Args:
             to: Recipient email address(es)
@@ -44,7 +61,89 @@ class EmailSender:
         Returns:
             True if sent successfully, False otherwise
         """
+        # Try Gmail API first if OAuth credentials are available
+        if self.oauth_credentials and self.gmail_service:
+            return self._send_via_gmail_api(to, subject, body, cc, bcc, attachments, html)
+        
+        # Fall back to SMTP
+        return self._send_via_smtp(to, subject, body, cc, bcc, attachments, html)
+    
+    def _send_via_gmail_api(self,
+                           to: str or List[str],
+                           subject: str,
+                           body: str,
+                           cc: Optional[List[str]] = None,
+                           bcc: Optional[List[str]] = None,
+                           attachments: Optional[List[str]] = None,
+                           html: bool = False) -> bool:
+        """Send email via Gmail API"""
         try:
+            # Create message
+            msg = MIMEMultipart()
+            msg['From'] = self.email_address
+            
+            # Handle recipients
+            if isinstance(to, str):
+                to = [to]
+            msg['To'] = ', '.join(to)
+            
+            if cc:
+                msg['Cc'] = ', '.join(cc)
+            if bcc:
+                msg['Bcc'] = ', '.join(bcc)
+            
+            msg['Subject'] = subject
+            
+            # Add body
+            mime_type = 'html' if html else 'plain'
+            msg.attach(MIMEText(body, mime_type))
+            
+            # Add attachments
+            if attachments:
+                for file_path in attachments:
+                    if os.path.exists(file_path):
+                        self._attach_file(msg, file_path)
+                    else:
+                        print(f"Warning: Attachment not found: {file_path}")
+            
+            # Encode message
+            raw_message = base64.urlsafe_b64encode(msg.as_bytes()).decode('utf-8')
+            
+            # Send via Gmail API
+            message = {'raw': raw_message}
+            sent_message = self.gmail_service.users().messages().send(
+                userId='me',
+                body=message
+            ).execute()
+            
+            print(f"✓ Email sent successfully via Gmail API to {', '.join(to)}")
+            return True
+            
+        except HttpError as e:
+            print(f"✗ Gmail API error sending email: {str(e)}")
+            # If Gmail API fails, try SMTP as fallback
+            print("⚠️  Falling back to SMTP...")
+            return self._send_via_smtp(to, subject, body, cc, bcc, attachments, html)
+        except Exception as e:
+            print(f"✗ Error sending email via Gmail API: {str(e)}")
+            # If Gmail API fails, try SMTP as fallback
+            print("⚠️  Falling back to SMTP...")
+            return self._send_via_smtp(to, subject, body, cc, bcc, attachments, html)
+    
+    def _send_via_smtp(self,
+                      to: str or List[str],
+                      subject: str,
+                      body: str,
+                      cc: Optional[List[str]] = None,
+                      bcc: Optional[List[str]] = None,
+                      attachments: Optional[List[str]] = None,
+                      html: bool = False) -> bool:
+        """Send email via SMTP"""
+        try:
+            if not self.password:
+                print(f"✗ Cannot send via SMTP: No password configured")
+                return False
+            
             # Create message
             msg = MIMEMultipart()
             msg['From'] = self.email_address
@@ -85,11 +184,11 @@ class EmailSender:
                 server.send_message(msg)
                 server.quit()
             
-            print(f"✓ Email sent successfully to {', '.join(to)}")
+            print(f"✓ Email sent successfully via SMTP to {', '.join(to)}")
             return True
             
         except Exception as e:
-            print(f"✗ Error sending email: {str(e)}")
+            print(f"✗ Error sending email via SMTP: {str(e)}")
             return False
     
     def _attach_file(self, msg: MIMEMultipart, file_path: str):
