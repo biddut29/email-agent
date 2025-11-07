@@ -221,6 +221,19 @@ class AccountManager:
             print(f"Error getting all accounts: {e}")
             return []
     
+    def get_all_accounts_with_credentials(self) -> List[Dict]:
+        """Get all accounts WITH passwords and OAuth credentials (for internal monitoring)"""
+        if self.accounts_collection is None:
+            return []
+        
+        try:
+            # Get all accounts including passwords and OAuth credentials
+            accounts = list(self.accounts_collection.find({}))
+            return [self._format_account(acc) for acc in accounts]
+        except Exception as e:
+            print(f"Error getting all accounts with credentials: {e}")
+            return []
+    
     def get_account_count(self) -> int:
         """Get total number of accounts"""
         if self.accounts_collection is None:

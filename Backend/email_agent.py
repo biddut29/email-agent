@@ -116,140 +116,324 @@ class EmailAgent:
             print("✓ Email monitoring stopped")
     
     def _monitoring_loop(self, check_interval: int):
-        """Background loop that checks for new emails"""
+        """Background loop that checks for new emails for ALL accounts"""
         print("📡 Monitoring loop started...")
+        
+        # Store Gmail API client for OAuth accounts (per account)
+        gmail_clients = {}  # account_id -> GmailAPIClient
+        imap_receivers = {}  # account_id -> EmailReceiver (for password accounts)
         
         while self.monitoring:
             try:
-                # Get active account
-                if self.account_manager:
-                    active_account = self.account_manager.get_active_account()
-                    if not active_account:
-                        time.sleep(check_interval)
-                        continue
-                    
-                    # Update receiver with active account credentials
-                    self.receiver.email_address = active_account['email']
-                    self.receiver.password = active_account['password']
-                    self.receiver.imap_server = active_account['imap_server']
-                    self.receiver.imap_port = active_account['imap_port']
-                    account_id = active_account['id']
-                else:
-                    account_id = None
+                if not self.account_manager:
+                    time.sleep(check_interval)
+                    continue
                 
-                # Check for new emails
-                new_emails = self._check_new_emails()
+                # Get active account (for auto-reply only)
+                active_account = self.account_manager.get_active_account()
+                active_account_id = active_account['id'] if active_account else None
                 
-                if new_emails:
-                    print(f"📨 Found {len(new_emails)} new email(s)!")
-                    
-                    # Save to MongoDB if available
-                    if self.mongodb_manager and self.mongodb_manager.emails_collection is not None and account_id:
-                        result = self.mongodb_manager.save_emails(new_emails, account_id)
-                        if result.get('success'):
-                            print(f"💾 Saved {result.get('total', 0)} new emails to MongoDB")
-                    
-                    # Run AI analysis if enabled (asynchronously to not block monitoring)
-                    if self.ai_enabled and self.ai_agent:
-                        # Process AI analysis in background thread to not block monitoring loop
-                        import threading
-                        def analyze_emails_async():
-                            for email in new_emails:
-                                try:
-                                    print(f"🤖 Analyzing email: {email.get('subject', 'No subject')[:50]}")
-                                    analysis = self.ai_agent.analyze_email(email)
-                                    email['ai_analysis'] = analysis
-                                    
-                                    # Save AI analysis to separate collection in MongoDB
-                                    if self.mongodb_manager and self.mongodb_manager.ai_analysis_collection is not None:
-                                        email_message_id = email.get('message_id')
-                                        if email_message_id:
-                                            analysis_result = self.mongodb_manager.save_ai_analysis(
-                                                email_message_id, 
-                                                account_id, 
-                                                analysis
-                                            )
-                                            if analysis_result.get('success'):
-                                                print(f"🧠 AI analysis saved for: {email.get('subject', 'No subject')[:40]}")
-                                    
-                                    # Auto-reply if enabled and appropriate
-                                    if self.auto_reply_enabled and self._should_auto_reply(email, analysis):
-                                        try:
-                                            self._send_auto_reply(email, analysis)
-                                        except Exception as e:
-                                            print(f"⚠ Auto-reply failed: {e}")
-                                    
-                                except Exception as e:
-                                    print(f"⚠ AI analysis failed: {e}")
+                # Get ALL accounts to monitor (with credentials for monitoring)
+                all_accounts = self.account_manager.get_all_accounts_with_credentials()
+                
+                if not all_accounts:
+                    time.sleep(check_interval)
+                    continue
+                
+                # Debug: Log accounts being monitored
+                if not hasattr(self, '_last_accounts_log') or self._last_accounts_log != len(all_accounts):
+                    print(f"📋 Monitoring {len(all_accounts)} account(s): {[acc['email'] for acc in all_accounts]}")
+                    self._last_accounts_log = len(all_accounts)
+                
+                # Monitor each account
+                for account in all_accounts:
+                    try:
+                        account_id = account['id']
+                        account_email = account['email']
                         
-                        # Start analysis in background thread (non-blocking)
-                        analysis_thread = threading.Thread(target=analyze_emails_async, daemon=True)
-                        analysis_thread.start()
-                        print(f"🚀 Started AI analysis in background for {len(new_emails)} email(s)")
-                    
-                    # Send notification to UI
-                    if self.notification_callback:
-                        try:
-                            import asyncio
-                            import concurrent.futures
-                            
-                            for email in new_emails:
-                                notification = {
-                                    "type": "new_email",
-                                    "email": {
-                                        "subject": email.get('subject', 'No Subject'),
-                                        "from": email.get('from', 'Unknown'),
-                                        "date": email.get('date', ''),
-                                        "category": email.get('ai_analysis', {}).get('category', 'other') if email.get('ai_analysis') else 'other',
-                                        "is_spam": email.get('ai_analysis', {}).get('is_spam', False) if email.get('ai_analysis') else False,
-                                        "urgency_score": email.get('ai_analysis', {}).get('urgency_score', 0) if email.get('ai_analysis') else 0
-                                    },
-                                    "timestamp": datetime.now().isoformat(),
-                                    "count": len(new_emails)
-                                }
+                        # Debug: Log which account we're checking
+                        # (only log occasionally to avoid spam)
+                        if not hasattr(self, '_last_check_log') or time.time() - self._last_check_log > 30:
+                            print(f"🔍 Checking account {account_id} ({account_email})...")
+                            self._last_check_log = time.time()
+                        
+                        # Check if account has OAuth credentials (SSO account)
+                        oauth_credentials = account.get('oauth_credentials')
+                        
+                        if oauth_credentials:
+                            # Use Gmail API for OAuth accounts
+                            try:
+                                from auth_manager import AuthManager
+                                from google.oauth2.credentials import Credentials
+                                from googleapiclient.discovery import build
+                                from gmail_api_client import GmailAPIClient
+                                from google.auth.transport.requests import Request
                                 
-                                # Schedule the coroutine in a thread-safe way
-                                try:
-                                    loop = asyncio.get_event_loop()
-                                    if loop and loop.is_running():
-                                        # Schedule coroutine in the existing event loop
-                                        asyncio.run_coroutine_threadsafe(
-                                            self.notification_callback(notification), 
-                                            loop
-                                        )
-                                        print(f"📬 Notification sent: {email.get('subject', 'No Subject')[:40]}")
-                                    else:
-                                        # Fallback: try asyncio.run
-                                        asyncio.run(self.notification_callback(notification))
-                                        print(f"📬 Notification sent (fallback): {email.get('subject', 'No Subject')[:40]}")
-                                except RuntimeError:
-                                    # No event loop in current thread, try to get the main loop
+                                # Get or create Gmail client for this account
+                                if account_id not in gmail_clients:
+                                    # Convert dict to Credentials object
+                                    auth_mgr = AuthManager()  # Uses config values
+                                    creds = auth_mgr.dict_to_credentials(oauth_credentials)
+                                    
+                                    # Refresh if expired
+                                    if creds.expired and creds.refresh_token:
+                                        try:
+                                            creds.refresh(Request())
+                                            # Update stored credentials
+                                            updated_creds_dict = auth_mgr.credentials_to_dict(creds)
+                                            self.account_manager.update_account_oauth_credentials(account_id, updated_creds_dict)
+                                        except Exception as refresh_e:
+                                            print(f"⚠ Failed to refresh OAuth token for {account_email}: {refresh_e}")
+                                            continue
+                                    
+                                    # Build Gmail service
+                                    gmail_service = build('gmail', 'v1', credentials=creds)
+                                    
+                                    # Create Gmail client
+                                    gmail_client = GmailAPIClient(account_email)
+                                    gmail_client.service = gmail_service
+                                    gmail_client.creds = creds
+                                    
+                                    # Get profile to initialize history_id
                                     try:
-                                        import threading
-                                        # Store the main event loop when starting monitoring
-                                        if hasattr(self, '_main_loop') and self._main_loop:
-                                            asyncio.run_coroutine_threadsafe(
-                                                self.notification_callback(notification),
-                                                self._main_loop
-                                            )
-                                            print(f"📬 Notification sent (main loop): {email.get('subject', 'No Subject')[:40]}")
-                                    except Exception as e2:
-                                        print(f"⚠ Failed to send notification (inner): {e2}")
-                                        
-                        except Exception as e:
-                            print(f"⚠ Failed to send notification: {e}")
+                                        profile = gmail_service.users().getProfile(userId='me').execute()
+                                        gmail_client.history_id = profile.get('historyId')
+                                    except Exception as profile_e:
+                                        print(f"⚠ Failed to get Gmail profile for {account_email}: {profile_e}")
+                                        gmail_client.history_id = None
+                                    
+                                    gmail_clients[account_id] = gmail_client
+                                    print(f"✓ Gmail API client initialized for {account_email}")
+                                
+                                gmail_client = gmail_clients[account_id]
+                                
+                                # Refresh credentials if expired
+                                if gmail_client.creds.expired and gmail_client.creds.refresh_token:
+                                    try:
+                                        gmail_client.creds.refresh(Request())
+                                        # Update stored credentials
+                                        auth_mgr = AuthManager()  # Uses config values
+                                        updated_creds_dict = auth_mgr.credentials_to_dict(gmail_client.creds)
+                                        self.account_manager.update_account_oauth_credentials(account_id, updated_creds_dict)
+                                        # Rebuild service with refreshed credentials
+                                        gmail_client.service = build('gmail', 'v1', credentials=gmail_client.creds)
+                                    except Exception as refresh_e:
+                                        print(f"⚠ Failed to refresh OAuth token for {account_email}: {refresh_e}")
+                                
+                                # Get new emails using Gmail API
+                                if gmail_client.history_id:
+                                    new_emails = gmail_client.get_new_emails(limit=10)
+                                else:
+                                    # Fallback: get recent emails if history_id not available
+                                    new_emails = gmail_client.get_emails(limit=10, query='in:inbox is:unread')
+                                
+                                # Filter to only new emails (check against MongoDB)
+                                if new_emails and self.mongodb_manager:
+                                    existing_message_ids = set()
+                                    message_ids = [e.get('message_id') for e in new_emails if e.get('message_id')]
+                                    if message_ids:
+                                        existing_docs = self.mongodb_manager.emails_collection.find(
+                                            {
+                                                "message_id": {"$in": message_ids},
+                                                "account_id": account_id
+                                            },
+                                            {"message_id": 1}
+                                        )
+                                        existing_message_ids = {doc.get('message_id') for doc in existing_docs}
+                                    
+                                    new_emails = [e for e in new_emails if e.get('message_id') not in existing_message_ids]
+                                
+                                # Process new emails (send notifications for all, auto-reply for all accounts)
+                                if new_emails:
+                                    is_active_account = (account_id == active_account_id)
+                                    self._process_new_emails(new_emails, account_id, check_interval, should_auto_reply=True)  # All accounts should auto-reply
+                                
+                            except Exception as e:
+                                print(f"⚠ Gmail API monitoring error for {account_email}: {e}")
+                                import traceback
+                                traceback.print_exc()
+                                continue
+                        else:
+                            # Use IMAP for password-based accounts
+                            password = account.get('password')
+                            if not password:
+                                continue  # Skip accounts without credentials
+                            
+                            # Get or create IMAP receiver for this account
+                            if account_id not in imap_receivers:
+                                from email_receiver import EmailReceiver
+                                receiver = EmailReceiver()
+                                receiver.email_address = account_email
+                                receiver.password = password
+                                receiver.imap_server = account.get('imap_server', 'imap.gmail.com')
+                                receiver.imap_port = account.get('imap_port', 993)
+                                imap_receivers[account_id] = receiver
+                            
+                            receiver = imap_receivers[account_id]
+                            
+                            # Ensure connection
+                            if not receiver.mail:
+                                if not receiver.connect():
+                                    print(f"⚠ Failed to connect to {account_email}")
+                                    continue
+                            
+                            # Check for new emails using IMAP
+                            try:
+                                new_emails = receiver.get_emails(folder='INBOX', limit=10, unread_only=False)
+                                
+                                # Filter to only new emails (check against MongoDB)
+                                if new_emails and self.mongodb_manager:
+                                    existing_message_ids = set()
+                                    message_ids = [e.get('message_id') for e in new_emails if e.get('message_id')]
+                                    if message_ids:
+                                        existing_docs = self.mongodb_manager.emails_collection.find(
+                                            {
+                                                "message_id": {"$in": message_ids},
+                                                "account_id": account_id
+                                            },
+                                            {"message_id": 1}
+                                        )
+                                        existing_message_ids = {doc.get('message_id') for doc in existing_docs}
+                                    
+                                    new_emails = [e for e in new_emails if e.get('message_id') not in existing_message_ids]
+                                
+                                # Process new emails (send notifications for all, auto-reply for all accounts)
+                                if new_emails:
+                                    is_active_account = (account_id == active_account_id)
+                                    self._process_new_emails(new_emails, account_id, check_interval, should_auto_reply=True)  # All accounts should auto-reply
+                            except Exception as e:
+                                print(f"⚠ IMAP monitoring error for {account_email}: {e}")
+                                continue
                     
-                    # Update last check time
-                    self.last_check_time = datetime.now()
+                    except Exception as e:
+                        print(f"⚠ Error monitoring account {account.get('email', 'unknown')}: {e}")
+                        continue
                 
                 # Wait before next check
                 time.sleep(check_interval)
                 
             except Exception as e:
                 print(f"⚠ Monitoring error: {e}")
+                import traceback
+                traceback.print_exc()
                 time.sleep(check_interval)
         
         print("📡 Monitoring loop stopped")
+    
+    def _process_new_emails(self, new_emails: List[Dict], account_id: Optional[int], check_interval: int, should_auto_reply: bool = True):
+        """Process new emails (save, analyze, notify)
+        
+        Args:
+            new_emails: List of new email dictionaries
+            account_id: Account ID that received these emails
+            check_interval: Monitoring check interval (unused, kept for compatibility)
+            should_auto_reply: Whether to send auto-replies (only True for active account)
+        """
+        if not new_emails:
+            return
+        
+        print(f"📨 Found {len(new_emails)} new email(s) for account {account_id}!")
+        
+        # Save to MongoDB if available
+        if self.mongodb_manager and self.mongodb_manager.emails_collection is not None and account_id:
+            result = self.mongodb_manager.save_emails(new_emails, account_id)
+            if result.get('success'):
+                print(f"💾 Saved {result.get('total', 0)} new emails to MongoDB")
+        
+        # Run AI analysis if enabled (asynchronously to not block monitoring)
+        if self.ai_enabled and self.ai_agent:
+            # Process AI analysis in background thread to not block monitoring loop
+            import threading
+            def analyze_emails_async():
+                for email in new_emails:
+                    try:
+                        print(f"🤖 Analyzing email: {email.get('subject', 'No subject')[:50]}")
+                        analysis = self.ai_agent.analyze_email(email)
+                        email['ai_analysis'] = analysis
+                        
+                        # Save AI analysis to separate collection in MongoDB
+                        if self.mongodb_manager and self.mongodb_manager.ai_analysis_collection is not None:
+                            email_message_id = email.get('message_id')
+                            if email_message_id:
+                                analysis_result = self.mongodb_manager.save_ai_analysis(
+                                    email_message_id, 
+                                    account_id, 
+                                    analysis
+                                )
+                                if analysis_result.get('success'):
+                                    print(f"🧠 AI analysis saved for: {email.get('subject', 'No subject')[:40]}")
+                        
+                        # Auto-reply if enabled and appropriate (only for active account)
+                        if should_auto_reply and self.auto_reply_enabled and self._should_auto_reply(email, analysis):
+                            try:
+                                self._send_auto_reply(email, analysis)
+                            except Exception as e:
+                                print(f"⚠ Auto-reply failed: {e}")
+                        
+                    except Exception as e:
+                        print(f"⚠ AI analysis failed: {e}")
+            
+            # Start analysis in background thread (non-blocking)
+            analysis_thread = threading.Thread(target=analyze_emails_async, daemon=True)
+            analysis_thread.start()
+            print(f"🚀 Started AI analysis in background for {len(new_emails)} email(s)")
+        
+        # Send notification to UI (with account_id - frontend will filter)
+        # Send notifications for ALL accounts - frontend filters by logged-in user's account
+        if self.notification_callback:
+            try:
+                import asyncio
+                import concurrent.futures
+                
+                for email in new_emails:
+                    notification = {
+                        "type": "new_email",
+                        "account_id": account_id,  # Frontend will filter based on logged-in user's account
+                        "email": {
+                            "subject": email.get('subject', 'No Subject'),
+                            "from": email.get('from', 'Unknown'),
+                            "date": email.get('date', ''),
+                            "category": email.get('ai_analysis', {}).get('category', 'other') if email.get('ai_analysis') else 'other',
+                            "is_spam": email.get('ai_analysis', {}).get('is_spam', False) if email.get('ai_analysis') else False,
+                            "urgency_score": email.get('ai_analysis', {}).get('urgency_score', 0) if email.get('ai_analysis') else 0
+                        },
+                        "timestamp": datetime.now().isoformat(),
+                        "count": len(new_emails)
+                    }
+                    
+                    # Schedule the coroutine in a thread-safe way
+                    try:
+                        loop = asyncio.get_event_loop()
+                        if loop and loop.is_running():
+                            # Schedule coroutine in the existing event loop
+                            asyncio.run_coroutine_threadsafe(
+                                self.notification_callback(notification), 
+                                loop
+                            )
+                            print(f"📬 Notification sent for account {account_id}: {email.get('subject', 'No Subject')[:40]}")
+                        else:
+                            # Fallback: try asyncio.run
+                            asyncio.run(self.notification_callback(notification))
+                            print(f"📬 Notification sent (fallback) for account {account_id}: {email.get('subject', 'No Subject')[:40]}")
+                    except RuntimeError:
+                        # No event loop in current thread, try to get the main loop
+                        try:
+                            import threading
+                            # Store the main event loop when starting monitoring
+                            if hasattr(self, '_main_loop') and self._main_loop:
+                                asyncio.run_coroutine_threadsafe(
+                                    self.notification_callback(notification),
+                                    self._main_loop
+                                )
+                                print(f"📬 Notification sent (main loop) for account {account_id}: {email.get('subject', 'No Subject')[:40]}")
+                        except Exception as e2:
+                            print(f"⚠ Failed to send notification (inner): {e2}")
+                            
+            except Exception as e:
+                print(f"⚠ Failed to send notification: {e}")
+        
+        # Update last check time
+        self.last_check_time = datetime.now()
     
     def _check_new_emails(self) -> List[Dict]:
         """
@@ -571,25 +755,43 @@ class EmailAgent:
             print(f"⏭️  Skipping auto-reply: Email is spam")
             return False
         
-        # 2. Email is a newsletter (category)
+        # 2. Email is from the same account (prevent self-reply loops)
+        from_email = email.get('from', '').lower()
+        if self.account_manager:
+            active_account = self.account_manager.get_active_account()
+            if active_account:
+                account_email = active_account.get('email', '').lower()
+                
+                # Extract email address from "Name <email@domain.com>" format
+                import re
+                email_match = re.search(r'[\w\.-]+@[\w\.-]+\.\w+', from_email)
+                if email_match:
+                    from_email_clean = email_match.group(0).lower()
+                else:
+                    from_email_clean = from_email
+                
+                if from_email_clean == account_email:
+                    print(f"⏭️  Skipping auto-reply: Email is from same account ({account_email}) - preventing loop")
+                    return False
+        
+        # 3. Email is a newsletter (category)
         category = analysis.get('category', '').lower()
         if category in ['newsletter', 'marketing', 'promotional', 'social']:
             print(f"⏭️  Skipping auto-reply: Email is {category}")
             return False
         
-        # 3. No suggested response available (main check)
+        # 4. No suggested response available (main check)
         suggested_response = analysis.get('suggested_response', '').strip()
         if not suggested_response or len(suggested_response) < 10:
             print(f"⏭️  Skipping auto-reply: No AI-generated response available")
             return False
         
-        # 4. Email is from a "noreply" address
-        from_email = email.get('from', '').lower()
+        # 5. Email is from a "noreply" address
         if 'noreply' in from_email or 'no-reply' in from_email:
             print(f"⏭️  Skipping auto-reply: From noreply address")
             return False
         
-        # 5. Check MongoDB - Have we already replied to this email?
+        # 6. Check MongoDB - Have we already replied to this email?
         if self.mongodb_manager and self.mongodb_manager.replies_collection is not None:
             message_id = email.get('message_id')
             if message_id and self.account_manager:
