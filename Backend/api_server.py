@@ -260,6 +260,91 @@ async def login():
         raise HTTPException(status_code=500, detail=f"Failed to initiate login: {str(e)}")
 
 
+@app.post("/api/auth/login-password")
+async def login_with_password(request: Request):
+    """Login with email and app password"""
+    try:
+        data = await request.json()
+        email = data.get('email')
+        password = data.get('password')
+        
+        if not email or not password:
+            raise HTTPException(status_code=400, detail="Email and password are required")
+        
+        # Check if account exists
+        account = account_manager.find_account_by_email(email)
+        
+        if account:
+            # Update account with new password
+            account_id = account['id']
+            account_manager.update_account(
+                account_id=account_id,
+                password=password
+            )
+        else:
+            # Create new account
+            result = account_manager.add_account(
+                email=email,
+                password=password,
+                imap_server="imap.gmail.com",
+                imap_port=993,
+                smtp_server="smtp.gmail.com",
+                smtp_port=587
+            )
+            if 'error' in result:
+                raise HTTPException(status_code=400, detail=result['error'])
+            account_id = result.get('account_id')
+            if not account_id:
+                # Get account to find ID
+                account = account_manager.find_account_by_email(email)
+                account_id = account['id'] if account else None
+        
+        if not account_id:
+            raise HTTPException(status_code=500, detail="Failed to create or update account")
+        
+        # Activate this account
+        account_manager.set_active_account(account_id)
+        
+        # Get account details
+        account = account_manager.get_account(account_id)
+        if not account:
+            raise HTTPException(status_code=404, detail="Account not found")
+        
+        # Create session token
+        session_data = {
+            'account_id': account_id,
+            'email': email,
+            'name': email.split('@')[0],
+            'created_at': datetime.utcnow().isoformat()
+        }
+        session_token = session_serializer.dumps(session_data)
+        
+        # Store session
+        active_sessions[session_token] = {
+            'account_id': account_id,
+            'email': email,
+            'name': email.split('@')[0],
+            'expires_at': (datetime.utcnow() + timedelta(days=7)).isoformat()
+        }
+        
+        print(f"✓ Password login successful for {email}")
+        return {
+            "success": True,
+            "session_token": session_token,
+            "user": {
+                "account_id": account_id,
+                "email": email
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Password login error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Login failed: {str(e)}")
+
+
 @app.get("/api/auth/callback")
 async def oauth_callback(code: str, state: Optional[str] = None):
     """Handle OAuth callback and create session"""
