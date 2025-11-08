@@ -218,13 +218,116 @@ jobs:
             
             # Wait for services to be ready
             echo "⏳ Waiting for services to start..."
-            sleep 10
+            sleep 15
             
             # Check container status
             echo "📊 Container status:"
             sudo docker-compose -f docker-compose.dev.yml ps
             
+            # Check and configure firewall
+            echo "🔥 Checking firewall configuration..."
+            if command -v ufw &> /dev/null; then
+              echo "Opening ports 3000 and 8000 in UFW..."
+              sudo ufw allow 3000/tcp 2>/dev/null || true
+              sudo ufw allow 8000/tcp 2>/dev/null || true
+              sudo ufw reload 2>/dev/null || true
+              echo "UFW status:"
+              sudo ufw status 2>/dev/null || true
+            else
+              echo "UFW not installed, checking iptables..."
+              sudo iptables -L -n 2>/dev/null | grep -E '(3000|8000)' || echo "Check cloud firewall rules"
+            fi
+            
+            # Check if ports are listening
+            echo ""
+            echo "🔍 Checking if ports are listening..."
+            if command -v ss &> /dev/null; then
+              PORT_3000=$(sudo ss -tlnp 2>/dev/null | grep ':3000' || echo "")
+              PORT_8000=$(sudo ss -tlnp 2>/dev/null | grep ':8000' || echo "")
+              if [ -n "$PORT_3000" ]; then
+                echo "✅ Port 3000 is listening: $PORT_3000"
+              else
+                echo "❌ Port 3000 is NOT listening"
+              fi
+              if [ -n "$PORT_8000" ]; then
+                echo "✅ Port 8000 is listening: $PORT_8000"
+              else
+                echo "❌ Port 8000 is NOT listening"
+              fi
+            elif command -v netstat &> /dev/null; then
+              PORT_3000=$(sudo netstat -tlnp 2>/dev/null | grep ':3000' || echo "")
+              PORT_8000=$(sudo netstat -tlnp 2>/dev/null | grep ':8000' || echo "")
+              if [ -n "$PORT_3000" ]; then
+                echo "✅ Port 3000 is listening: $PORT_3000"
+              else
+                echo "❌ Port 3000 is NOT listening"
+              fi
+              if [ -n "$PORT_8000" ]; then
+                echo "✅ Port 8000 is listening: $PORT_8000"
+              else
+                echo "❌ Port 8000 is NOT listening"
+              fi
+            fi
+            
+            # Test local connections
+            echo ""
+            echo "🧪 Testing local connections..."
+            echo "Testing http://localhost:3000..."
+            curl -I http://localhost:3000 --max-time 5 2>&1 | head -3 || echo "❌ Frontend not responding locally"
+            echo ""
+            echo "Testing http://localhost:8000/api/health..."
+            curl -I http://localhost:8000/api/health --max-time 5 2>&1 | head -3 || echo "❌ Backend not responding locally"
+            
+            # Show frontend logs if there are issues
+            echo ""
+            echo "📋 Frontend container logs (last 20 lines):"
+            sudo docker-compose -f docker-compose.dev.yml logs --tail=20 frontend 2>/dev/null || true
+            
+            # Auto-fix: Restart containers if they're not running properly
+            echo ""
+            echo "🔧 Auto-fixing container issues..."
+            FRONTEND_UP=$(sudo docker-compose -f docker-compose.dev.yml ps frontend 2>/dev/null | grep -c "Up" || echo "0")
+            BACKEND_UP=$(sudo docker-compose -f docker-compose.dev.yml ps backend 2>/dev/null | grep -c "Up" || echo "0")
+            
+            if [ "$FRONTEND_UP" -eq 0 ] || [ "$BACKEND_UP" -eq 0 ]; then
+              echo "⚠️  Some containers are not running, restarting all..."
+              sudo docker-compose -f docker-compose.dev.yml restart
+              sleep 10
+              echo "Container status after restart:"
+              sudo docker-compose -f docker-compose.dev.yml ps
+            fi
+            
+            # Ensure firewall ports are open
+            echo ""
+            echo "🔥 Ensuring firewall ports are open..."
+            if command -v ufw &> /dev/null; then
+              sudo ufw allow 3000/tcp 2>/dev/null || true
+              sudo ufw allow 8000/tcp 2>/dev/null || true
+              sudo ufw reload 2>/dev/null || true
+              echo "✅ Firewall configured"
+            fi
+            
+            # Final connectivity test
+            echo ""
+            echo "🧪 Final connectivity test..."
+            if curl -f -s --max-time 5 http://localhost:3000 > /dev/null 2>&1; then
+              echo "✅ Frontend is responding on localhost:3000"
+            else
+              echo "❌ Frontend is NOT responding on localhost:3000"
+              echo "Frontend logs:"
+              sudo docker-compose -f docker-compose.dev.yml logs --tail=30 frontend 2>/dev/null || true
+            fi
+            
+            if curl -f -s --max-time 5 http://localhost:8000/api/health > /dev/null 2>&1; then
+              echo "✅ Backend is responding on localhost:8000"
+            else
+              echo "❌ Backend is NOT responding on localhost:8000"
+              echo "Backend logs:"
+              sudo docker-compose -f docker-compose.dev.yml logs --tail=30 backend 2>/dev/null || true
+            fi
+            
             # Clean up old images
+            echo ""
             echo "🧹 Cleaning up old images..."
             sudo docker image prune -f
             
