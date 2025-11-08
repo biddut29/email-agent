@@ -3,9 +3,10 @@ import path from "path";
 
 const nextConfig: NextConfig = {
   webpack: (config, { dir }) => {
+    const projectRoot = path.resolve(dir);
     config.resolve.alias = {
       ...config.resolve.alias,
-      '@': path.join(dir),
+      '@': projectRoot,
     };
     return config;
   },
