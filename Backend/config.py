@@ -72,8 +72,7 @@ FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "").split(",") if os.getenv("CORS_ORIGINS") else [
     "http://localhost:3000",
     "http://localhost:3001",
-    "http://74.225.21.182:3000",
-    "https://74.225.21.182:3000",
+    "https://emailagent.duckdns.org",
 ]
 # Filter out empty strings
 CORS_ORIGINS = [origin.strip() for origin in CORS_ORIGINS if origin.strip()]
