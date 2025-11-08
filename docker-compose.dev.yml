@@ -27,7 +27,8 @@ services:
       - SESSION_SECRET=${SESSION_SECRET}
       - FRONTEND_URL=${FRONTEND_URL}
     env_file:
-      - ./Backend/.env
+      - ./Backend/.env.dev
+      - ./Backend/.env  # Fallback to .env if .env.dev doesn't exist
     depends_on:
       - mongodb
     networks:
@@ -53,7 +54,8 @@ services:
       - NODE_ENV=development
       - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
     env_file:
-      - ./Frontend/.env.local
+      - ./Frontend/.env.dev.local
+      - ./Frontend/.env.local  # Fallback to .env.local if .env.dev.local doesn't exist
     depends_on:
       - backend
     networks:

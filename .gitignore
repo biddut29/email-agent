@@ -77,10 +77,16 @@ Frontend/build/
 .env.development
 .env.test
 .env*.local
+.env.dev
+.env.dev.local
 Backend/.env
 Backend/.env.local
+Backend/.env.dev
 Frontend/.env
 Frontend/.env.local
+Frontend/.env.dev.local
+# Template files are OK to commit
+!**/env.dev.template
 
 # ============================================
 # Logs
