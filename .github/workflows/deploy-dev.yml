@@ -50,7 +50,7 @@ jobs:
             else
               echo "📁 Creating project directory and cloning repository..."
               sudo mkdir -p /opt/email-agent
-              sudo chown $USER:$USER /opt/email-agent
+              sudo chown $VM_USER:$VM_USER /opt/email-agent
               cd /opt/email-agent
               
               # Clone the repository using token
@@ -64,7 +64,7 @@ jobs:
               echo "📦 Installing Docker..."
               curl -fsSL https://get.docker.com -o get-docker.sh
               sudo sh get-docker.sh
-              sudo usermod -aG docker $USER
+              sudo usermod -aG docker $VM_USER
               rm get-docker.sh
             fi
             
