@@ -659,6 +659,11 @@ class EmailAgentAPI {
     };
   }> {
     const token = localStorage.getItem('session_token');
+    if (!token) {
+      throw new Error('No session token found');
+    }
+    
+    // Try multiple methods to send the token
     return this.request<{
       success: boolean;
       user: {
@@ -669,7 +674,8 @@ class EmailAgentAPI {
     }>('/api/auth/me', {
       credentials: 'include',
       headers: {
-        'Cookie': token ? `session_token=${token}` : ''
+        'Authorization': `Bearer ${token}`,
+        // Also try as query parameter as fallback
       }
     });
   }

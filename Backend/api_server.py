@@ -430,26 +430,39 @@ async def oauth_callback(code: str, state: Optional[str] = None):
 @app.get("/api/auth/me")
 async def get_current_user(request: Request, session_token: Optional[str] = Cookie(None)):
     """Get current authenticated user"""
+    print(f"🔍 Auth check - Cookie token: {session_token[:50] if session_token else 'None'}...")
+    
     # Also check Authorization header as fallback
     if not session_token:
         # Try to get from Authorization header
         auth_header = request.headers.get('Authorization', '')
+        print(f"🔍 Auth check - Authorization header: {auth_header[:50] if auth_header else 'None'}...")
         if auth_header and auth_header.startswith('Bearer '):
             session_token = auth_header.replace('Bearer ', '')
+            print(f"🔍 Auth check - Extracted token from Bearer header")
         # Also try query parameter
         if not session_token:
             session_token = request.query_params.get('token')
+            print(f"🔍 Auth check - Query param token: {session_token[:50] if session_token else 'None'}...")
     
     if not session_token:
+        print(f"❌ Auth check - No token found")
         raise HTTPException(status_code=401, detail="Not authenticated")
     
     try:
+        print(f"🔍 Auth check - Attempting to load session token...")
         session_data = session_serializer.loads(session_token, max_age=604800)  # 7 days
+        print(f"🔍 Auth check - Session data loaded: account_id={session_data.get('account_id')}")
+        
         session = active_sessions.get(session_token)
+        print(f"🔍 Auth check - Active sessions count: {len(active_sessions)}")
+        print(f"🔍 Auth check - Session found in active_sessions: {session is not None}")
         
         if not session:
+            print(f"❌ Auth check - Session not found in active_sessions")
             raise HTTPException(status_code=401, detail="Session expired")
         
+        print(f"✅ Auth check - Success for account_id={session['account_id']}, email={session['email']}")
         return {
             "success": True,
             "user": {
@@ -458,8 +471,12 @@ async def get_current_user(request: Request, session_token: Optional[str] = Cook
                 "name": session.get('name', '')
             }
         }
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"❌ Auth check error: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=401, detail="Invalid session")
 
 
