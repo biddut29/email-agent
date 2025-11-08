@@ -34,10 +34,14 @@ jobs:
           GITHUB_REPO: ${{ github.repository }}
           GITHUB_TOKEN: ${{ secrets.GITHUBTOKEN }}
         run: |
+          echo "🌐 Deploying to VM: $VM_HOST"
+          echo "👤 VM User: $VM_USER"
           sshpass -p "$VM_PASSWORD" ssh -o StrictHostKeyChecking=no $VM_USER@$VM_HOST << DEPLOY_SCRIPT
             set -e
             
             echo "🚀 Starting deployment..."
+            echo "🌐 VM IP: $(hostname -I | awk '{print $1}')"
+            echo "👤 Current User: $(whoami)"
             
             # Navigate to project directory or create and clone
             if [ -d "/opt/email-agent/.git" ]; then
@@ -76,15 +80,15 @@ jobs:
             
             # Stop existing containers
             echo "🛑 Stopping existing containers..."
-            docker-compose -f docker-compose.dev.yml down || true
+            sudo docker-compose -f docker-compose.dev.yml down || true
             
             # Build new images
             echo "🔨 Building Docker images..."
-            docker-compose -f docker-compose.dev.yml build --no-cache
+            sudo docker-compose -f docker-compose.dev.yml build --no-cache
             
             # Start containers
             echo "🚀 Starting containers..."
-            docker-compose -f docker-compose.dev.yml up -d
+            sudo docker-compose -f docker-compose.dev.yml up -d
             
             # Wait for services to be ready
             echo "⏳ Waiting for services to start..."
@@ -92,11 +96,11 @@ jobs:
             
             # Check container status
             echo "📊 Container status:"
-            docker-compose -f docker-compose.dev.yml ps
+            sudo docker-compose -f docker-compose.dev.yml ps
             
             # Clean up old images
             echo "🧹 Cleaning up old images..."
-            docker image prune -f
+            sudo docker image prune -f
             
             echo "✅ Deployment completed successfully!"
           DEPLOY_SCRIPT
