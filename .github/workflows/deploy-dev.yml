@@ -96,6 +96,23 @@ jobs:
             echo "🛑 Stopping existing containers..."
             sudo docker-compose -f docker-compose.dev.yml down || true
             
+            # Clean up Docker resources to free space
+            echo "🧹 Cleaning up Docker resources to free disk space..."
+            echo "📊 Disk space before cleanup:"
+            df -h /
+            
+            # Remove unused containers, networks, images, and build cache
+            sudo docker system prune -af --volumes || true
+            
+            # Remove dangling images
+            sudo docker image prune -af || true
+            
+            # Remove build cache
+            sudo docker builder prune -af || true
+            
+            echo "📊 Disk space after cleanup:"
+            df -h /
+            
             # Build new images
             echo "🔨 Building Docker images..."
             sudo docker-compose -f docker-compose.dev.yml build --no-cache
