@@ -8,9 +8,10 @@ from dotenv import load_dotenv
 
 # Load environment variables from .env file
 # Try .env.dev first (for dev environment), then fall back to .env
-load_dotenv('.env.dev')  # Try dev environment file first
-load_dotenv('.env')  # Fall back to regular .env file
-load_dotenv()  # Also load from environment variables
+# Use override=True to ensure .env.dev values take precedence over empty env vars from docker-compose
+load_dotenv('.env.dev', override=True)  # Try dev environment file first, override existing
+load_dotenv('.env', override=True)  # Fall back to regular .env file
+load_dotenv()  # Also load from environment variables (but don't override .env.dev values)
 
 # Email Credentials
 EMAIL_ADDRESS = os.getenv("EMAIL_ADDRESS", "bidduttest@gmail.com")
