@@ -7,7 +7,10 @@ import os
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
-load_dotenv()
+# Try .env.dev first (for dev environment), then fall back to .env
+load_dotenv('.env.dev')  # Try dev environment file first
+load_dotenv('.env')  # Fall back to regular .env file
+load_dotenv()  # Also load from environment variables
 
 # Email Credentials
 EMAIL_ADDRESS = os.getenv("EMAIL_ADDRESS", "bidduttest@gmail.com")
