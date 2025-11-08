@@ -402,10 +402,20 @@ async def oauth_callback(code: str, state: Optional[str] = None):
         }
         
         # Redirect to frontend with token
+        # Force reload config to ensure we have the latest value
+        import importlib
+        importlib.reload(config)
         frontend_url = config.FRONTEND_URL
         redirect_url = f"{frontend_url}/auth/callback?token={session_token}"
         print(f"🔗 OAuth callback redirecting to: {redirect_url}")
         print(f"📋 Using FRONTEND_URL from config: {frontend_url}")
+        print(f"🔍 Config module path: {config.__file__}")
+        print(f"🔍 FRONTEND_URL value: {repr(frontend_url)}")
+        if 'localhost' in redirect_url:
+            print(f"⚠️ WARNING: Redirect URL contains localhost! This should not happen.")
+            # Force production URL
+            redirect_url = f"https://emailagent.duckdns.org/auth/callback?token={session_token}"
+            print(f"🔧 FORCED redirect to: {redirect_url}")
         return RedirectResponse(
             url=redirect_url,
             status_code=302
