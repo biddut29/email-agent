@@ -19,6 +19,6 @@ RUN npm run build
 EXPOSE 3000
 
 # Run in production mode (more stable behind reverse proxy)
-# The start script in package.json already binds to 0.0.0.0
+# The start script in package.json uses --hostname 0.0.0.0 to bind to all interfaces
 CMD ["npm", "start"]
 
