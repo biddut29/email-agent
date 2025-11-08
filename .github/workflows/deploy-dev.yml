@@ -31,25 +31,33 @@ jobs:
           VM_USER: ${{ secrets.VM_USER }}
           VM_PASSWORD: ${{ secrets.VM_PASSWORD }}
           VM_HOST: ${{ secrets.VM_HOST }}
+          GITHUB_REPO: ${{ github.repository }}
+          GITHUB_TOKEN: ${{ secrets.GITHUBTOKEN }}
         run: |
-          sshpass -p "$VM_PASSWORD" ssh -o StrictHostKeyChecking=no $VM_USER@$VM_HOST << 'DEPLOY_SCRIPT'
+          sshpass -p "$VM_PASSWORD" ssh -o StrictHostKeyChecking=no $VM_USER@$VM_HOST << DEPLOY_SCRIPT
             set -e
             
             echo "🚀 Starting deployment..."
             
-            # Navigate to project directory
-            cd /opt/email-agent || {
-              echo "📁 Creating project directory..."
+            # Navigate to project directory or create and clone
+            if [ -d "/opt/email-agent/.git" ]; then
+              echo "📁 Project directory exists, navigating..."
+              cd /opt/email-agent
+              echo "📥 Pulling latest code from dev branch..."
+              git fetch origin
+              git checkout dev
+              git reset --hard origin/dev
+            else
+              echo "📁 Creating project directory and cloning repository..."
               sudo mkdir -p /opt/email-agent
               sudo chown $USER:$USER /opt/email-agent
               cd /opt/email-agent
-            }
-            
-            # Pull latest changes from dev branch
-            echo "📥 Pulling latest code from dev branch..."
-            git fetch origin
-            git checkout dev
-            git reset --hard origin/dev
+              
+              # Clone the repository using token
+              echo "📥 Cloning repository..."
+              git clone https://${GITHUB_TOKEN}@github.com/${GITHUB_REPO}.git .
+              git checkout dev
+            fi
             
             # Ensure Docker and Docker Compose are installed
             if ! command -v docker &> /dev/null; then
