@@ -49,7 +49,7 @@ services:
     volumes:
       - ./Frontend:/app
       - /app/node_modules  # Prevent overwriting node_modules
-      - /app/.next  # Prevent overwriting .next build
+      # Removed /app/.next exclusion - it was causing Next.js compilation issues
     environment:
       - NODE_ENV=development
       - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
