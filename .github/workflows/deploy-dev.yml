@@ -96,19 +96,20 @@ jobs:
             echo "🛑 Stopping existing containers..."
             sudo docker-compose -f docker-compose.dev.yml down || true
             
-            # Clean up Docker resources to free space
-            echo "🧹 Cleaning up Docker resources to free disk space..."
+            # Selective cleanup - only remove old/unused resources, keep cache
+            echo "🧹 Selective Docker cleanup (preserving cache)..."
             echo "📊 Disk space before cleanup:"
             df -h /
             
-            # Remove unused containers, networks, images, and build cache
-            sudo docker system prune -af --volumes || true
+            # Only remove stopped containers and unused networks (keep images and cache)
+            sudo docker container prune -f || true
+            sudo docker network prune -f || true
             
-            # Remove dangling images
-            sudo docker image prune -af || true
+            # Only remove dangling images (not all images)
+            sudo docker image prune -f || true
             
-            # Remove build cache
-            sudo docker builder prune -af || true
+            # Only remove build cache older than 7 days (keep recent cache)
+            sudo docker builder prune -f --filter "until=168h" || true
             
             echo "📊 Disk space after cleanup:"
             df -h /
@@ -117,9 +118,13 @@ jobs:
             echo "🧹 Clearing Next.js cache..."
             sudo rm -rf /opt/email-agent/Frontend/.next || true
             
-            # Build new images
-            echo "🔨 Building Docker images..."
-            sudo docker-compose -f docker-compose.dev.yml build --no-cache
+            # Enable BuildKit for faster builds with better caching
+            export DOCKER_BUILDKIT=1
+            export COMPOSE_DOCKER_CLI_BUILD=1
+            
+            # Build new images WITH cache (much faster!)
+            echo "🔨 Building Docker images (with cache)..."
+            sudo docker-compose -f docker-compose.dev.yml build
             
             # Start containers
             echo "🚀 Starting containers..."

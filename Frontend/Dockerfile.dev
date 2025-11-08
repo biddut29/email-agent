@@ -5,14 +5,12 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install all dependencies (including dev dependencies)
-RUN npm install
+# Install dependencies with npm cache and use npm ci for faster, reliable installs
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci
 
 # Copy source code (will be overridden by volume mount in dev)
 COPY . .
-
-# Clear Next.js cache to ensure fresh build
-RUN rm -rf .next || true
 
 # Expose port
 EXPOSE 3000

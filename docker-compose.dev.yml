@@ -7,6 +7,9 @@ services:
       dockerfile: Dockerfile.dev
     container_name: email-agent-backend-dev
     restart: unless-stopped
+    # Add memory limits
+    mem_limit: 4g
+    memswap_limit: 4g
     ports:
       - "8000:8000"
     volumes:
@@ -37,6 +40,9 @@ services:
       dockerfile: Dockerfile.dev
     container_name: email-agent-frontend-dev
     restart: unless-stopped
+    # Add memory limits
+    mem_limit: 2g
+    memswap_limit: 2g
     ports:
       - "3000:3000"
     volumes:
@@ -57,6 +63,8 @@ services:
     image: mongo:7
     container_name: email-agent-mongodb-dev
     restart: unless-stopped
+    mem_limit: 1g
+    memswap_limit: 1g
     ports:
       - "27017:27017"
     volumes:
