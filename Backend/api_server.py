@@ -403,8 +403,11 @@ async def oauth_callback(code: str, state: Optional[str] = None):
         
         # Redirect to frontend with token
         frontend_url = config.FRONTEND_URL
+        redirect_url = f"{frontend_url}/auth/callback?token={session_token}"
+        print(f"🔗 OAuth callback redirecting to: {redirect_url}")
+        print(f"📋 Using FRONTEND_URL from config: {frontend_url}")
         return RedirectResponse(
-            url=f"{frontend_url}/auth/callback?token={session_token}",
+            url=redirect_url,
             status_code=302
         )
     except Exception as e:
