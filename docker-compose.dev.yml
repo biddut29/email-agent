@@ -51,6 +51,8 @@ services:
     environment:
       - NODE_ENV=production
       - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+      - HOSTNAME=0.0.0.0
+      - PORT=3000
     env_file:
       - ./Frontend/.env.dev.local
       - ./Frontend/.env.local  # Fallback to .env.local if .env.dev.local doesn't exist
