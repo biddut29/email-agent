@@ -137,12 +137,46 @@ jobs:
           DEPLOY_SCRIPT
       
       - name: Health Check
+        env:
+          VM_USER: ${{ secrets.VM_USER }}
+          VM_PASSWORD: ${{ secrets.VM_PASSWORD }}
+          VM_HOST: ${{ secrets.VM_HOST }}
         run: |
-          sleep 15
           echo "🏥 Performing health check..."
-          curl -f http://${{ secrets.VM_HOST }}:8000/api/health || {
-            echo "❌ Health check failed!"
-            exit 1
-          }
-          echo "✅ Health check passed!"
+          
+          # Wait a bit longer initially
+          sleep 20
+          
+          # Retry up to 5 times
+          for i in {1..5}; do
+            echo "Health check attempt $i/5..."
+            if curl -f -s --max-time 10 http://$VM_HOST:8000/api/health; then
+              echo "✅ Health check passed!"
+              exit 0
+            fi
+            if [ $i -lt 5 ]; then
+              echo "⏳ Waiting 10 seconds before retry..."
+              sleep 10
+            fi
+          done
+          
+          echo "❌ Health check failed! Getting diagnostic information..."
+          sshpass -p "$VM_PASSWORD" ssh -o StrictHostKeyChecking=no $VM_USER@$VM_HOST << 'DIAG_SCRIPT'
+            echo "=== Container Status ==="
+            sudo docker-compose -f /opt/email-agent/docker-compose.dev.yml ps || true
+            
+            echo ""
+            echo "=== Container Logs (Backend) ==="
+            sudo docker-compose -f /opt/email-agent/docker-compose.dev.yml logs --tail=50 backend || true
+            
+            echo ""
+            echo "=== Container Logs (Frontend) ==="
+            sudo docker-compose -f /opt/email-agent/docker-compose.dev.yml logs --tail=50 frontend || true
+            
+            echo ""
+            echo "=== Port Status ==="
+            sudo netstat -tlnp 2>/dev/null | grep -E ':(8000|3000)' || sudo ss -tlnp 2>/dev/null | grep -E ':(8000|3000)' || echo "Port check command not available"
+          DIAG_SCRIPT
+          
+          exit 1
 
