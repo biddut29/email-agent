@@ -46,10 +46,8 @@ services:
     memswap_limit: 2g
     ports:
       - "3000:3000"
-    volumes:
-      - ./Frontend:/app
-      - /app/node_modules  # Prevent overwriting node_modules
-      - /app/.next  # Preserve production build
+    # No volume mounts for production - use the built image directly
+    # The production build is already in the image from the Dockerfile
     environment:
       - NODE_ENV=production
       - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
