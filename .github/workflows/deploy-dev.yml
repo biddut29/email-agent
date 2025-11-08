@@ -210,9 +210,28 @@ jobs:
             
             # Build new images WITH cache (much faster!)
             echo "🔨 Building Docker images (with cache)..."
-            sudo docker-compose -f docker-compose.dev.yml build
+            if sudo docker-compose -f docker-compose.dev.yml build; then
+              echo "✅ Docker images built successfully"
+            else
+              echo "❌ Docker build failed!"
+              echo "   Checking build logs..."
+              sudo docker-compose -f docker-compose.dev.yml build --no-cache frontend 2>&1 | tail -50 || true
+              exit 1
+            fi
+            
+            # Verify frontend image was created
+            echo ""
+            echo "🔍 Verifying frontend image..."
+            if sudo docker images | grep -q "email-agent-frontend"; then
+              echo "✅ Frontend image exists"
+              sudo docker images | grep "email-agent-frontend" | head -1
+            else
+              echo "❌ Frontend image not found!"
+              exit 1
+            fi
             
             # Start containers
+            echo ""
             echo "🚀 Starting containers..."
             sudo docker-compose -f docker-compose.dev.yml up -d
             
@@ -223,6 +242,31 @@ jobs:
             # Check container status
             echo "📊 Container status:"
             sudo docker-compose -f docker-compose.dev.yml ps
+            
+            # Detailed frontend container check
+            echo ""
+            echo "🔍 Detailed Frontend Container Check:"
+            FRONTEND_STATUS=$(sudo docker-compose -f docker-compose.dev.yml ps frontend 2>/dev/null | grep -c "Up" || echo "0")
+            if [ "$FRONTEND_STATUS" -eq 0 ]; then
+              echo "❌ Frontend container is NOT running!"
+              echo "   Attempting to restart frontend container..."
+              sudo docker-compose -f docker-compose.dev.yml restart frontend
+              sleep 10
+              echo "   Frontend container status after restart:"
+              sudo docker-compose -f docker-compose.dev.yml ps frontend
+            else
+              echo "✅ Frontend container is running"
+            fi
+            
+            # Check if .next directory exists in frontend container
+            echo ""
+            echo "🔍 Checking if production build exists in frontend container:"
+            sudo docker exec email-agent-frontend-dev ls -la /app/.next 2>/dev/null | head -5 || echo "❌ .next directory not found - build may have failed"
+            
+            # Show frontend container logs
+            echo ""
+            echo "📋 Frontend container logs (last 30 lines):"
+            sudo docker-compose -f docker-compose.dev.yml logs --tail=30 frontend 2>/dev/null || true
             
             # Check and configure firewall
             echo "🔥 Checking firewall configuration..."
@@ -374,11 +418,26 @@ jobs:
               echo "=== Frontend container status ==="
               sudo docker-compose -f docker-compose.dev.yml ps frontend 2>/dev/null || true
               echo ""
-              echo "=== Frontend logs (last 50 lines) ==="
-              sudo docker-compose -f docker-compose.dev.yml logs --tail=50 frontend 2>/dev/null || true
+              echo "=== Frontend container health check ==="
+              sudo docker inspect email-agent-frontend-dev --format='{{.State.Status}} - {{.State.Health.Status}}' 2>/dev/null || echo "Could not inspect container"
               echo ""
-              echo "=== Checking if Next.js is still compiling ==="
-              sudo docker-compose -f docker-compose.dev.yml logs frontend 2>/dev/null | grep -i "compiling\|error\|ready" | tail -10 || true
+              echo "=== Frontend logs (last 100 lines) ==="
+              sudo docker-compose -f docker-compose.dev.yml logs --tail=100 frontend 2>/dev/null || true
+              echo ""
+              echo "=== Checking if .next build exists ==="
+              sudo docker exec email-agent-frontend-dev ls -la /app/.next 2>/dev/null | head -10 || echo "❌ .next directory not accessible"
+              echo ""
+              echo "=== Checking if Next.js process is running ==="
+              sudo docker exec email-agent-frontend-dev ps aux | grep -E "node|next" || echo "No Node.js processes found"
+              echo ""
+              echo "=== Checking container environment ==="
+              sudo docker exec email-agent-frontend-dev env | grep -E "NODE_ENV|NEXT_PUBLIC" || echo "Could not get environment"
+              echo ""
+              echo "=== Attempting to restart frontend container ==="
+              sudo docker-compose -f docker-compose.dev.yml restart frontend
+              sleep 15
+              echo "=== Testing again after restart ==="
+              curl -f -s --max-time 5 http://localhost:3000 > /dev/null 2>&1 && echo "✅ Frontend is now responding!" || echo "❌ Frontend still not responding"
             fi
             
             if curl -f -s --max-time 5 http://localhost:8000/api/health > /dev/null 2>&1; then
