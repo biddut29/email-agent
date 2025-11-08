@@ -200,7 +200,7 @@ jobs:
             echo "📊 Disk space after cleanup:"
             df -h /
             
-            # Clear Next.js cache if it exists
+            # Clear Next.js cache if it exists (will be rebuilt during Docker build)
             echo "🧹 Clearing Next.js cache..."
             sudo rm -rf /opt/email-agent/Frontend/.next || true
             
@@ -216,9 +216,9 @@ jobs:
             echo "🚀 Starting containers..."
             sudo docker-compose -f docker-compose.dev.yml up -d
             
-            # Wait for services to be ready (longer wait for Next.js compilation)
-            echo "⏳ Waiting for services to start (Next.js may need time to compile)..."
-            sleep 20
+            # Wait for services to be ready (production build is done during Docker build)
+            echo "⏳ Waiting for services to start..."
+            sleep 15
             
             # Check container status
             echo "📊 Container status:"
@@ -351,9 +351,9 @@ jobs:
               echo "✅ Firewall configured"
             fi
             
-            # Final connectivity test with retries (Next.js may need time to compile)
+            # Final connectivity test with retries (production server should start quickly)
             echo ""
-            echo "🧪 Final connectivity test (with retries for Next.js compilation)..."
+            echo "🧪 Final connectivity test (with retries for Next.js production server)..."
             FRONTEND_READY=0
             for i in {1..10}; do
               echo "  Attempt $i/10..."
@@ -363,7 +363,7 @@ jobs:
                 break
               fi
               if [ $i -lt 10 ]; then
-                echo "  Waiting 5 seconds for Next.js to compile..."
+                echo "  Waiting 5 seconds for Next.js to start..."
                 sleep 5
               fi
             done
