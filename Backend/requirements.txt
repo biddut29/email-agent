@@ -1,5 +1,6 @@
 # Core dependencies
 python-dotenv==1.0.0
+email-validator>=2.0.0
 
 # AI/ML libraries (optional - uncomment if using AI features)
 # openai==1.3.0
