@@ -113,6 +113,10 @@ jobs:
             echo "📊 Disk space after cleanup:"
             df -h /
             
+            # Clear Next.js cache if it exists
+            echo "🧹 Clearing Next.js cache..."
+            sudo rm -rf /opt/email-agent/Frontend/.next || true
+            
             # Build new images
             echo "🔨 Building Docker images..."
             sudo docker-compose -f docker-compose.dev.yml build --no-cache

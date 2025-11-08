@@ -11,6 +11,9 @@ RUN npm install
 # Copy source code (will be overridden by volume mount in dev)
 COPY . .
 
+# Clear Next.js cache to ensure fresh build
+RUN rm -rf .next || true
+
 # Expose port
 EXPOSE 3000
 
