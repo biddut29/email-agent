@@ -93,9 +93,9 @@ jobs:
               else
                 touch /opt/email-agent/Backend/.env.dev
                 echo "MONGODB_URI=mongodb://mongodb:27017/email_agent" >> /opt/email-agent/Backend/.env.dev
-                echo "GOOGLE_REDIRECT_URI=http://74.242.217.91:8000/api/auth/callback" >> /opt/email-agent/Backend/.env.dev
-                echo "FRONTEND_URL=http://74.242.217.91:3000" >> /opt/email-agent/Backend/.env.dev
-                echo "CORS_ORIGINS=http://localhost:3000,http://localhost:3001,https://74.242.217.91:3000,http://74.242.217.91:3000" >> /opt/email-agent/Backend/.env.dev
+                echo "GOOGLE_REDIRECT_URI=https://emailagent.duckdns.org/api/auth/callback" >> /opt/email-agent/Backend/.env.dev
+                echo "FRONTEND_URL=https://emailagent.duckdns.org" >> /opt/email-agent/Backend/.env.dev
+                echo "CORS_ORIGINS=http://localhost:3000,http://localhost:3001,https://emailagent.duckdns.org" >> /opt/email-agent/Backend/.env.dev
               fi
               sudo chown $VM_USER_VAL:$VM_USER_VAL /opt/email-agent/Backend/.env.dev
             fi
@@ -107,7 +107,7 @@ jobs:
                 cp /opt/email-agent/Frontend/env.dev.template /opt/email-agent/Frontend/.env.dev.local
               else
                 touch /opt/email-agent/Frontend/.env.dev.local
-                echo "NEXT_PUBLIC_API_URL=http://74.242.217.91:8000" >> /opt/email-agent/Frontend/.env.dev.local
+                echo "NEXT_PUBLIC_API_URL=https://emailagent.duckdns.org/api" >> /opt/email-agent/Frontend/.env.dev.local
                 echo "NODE_ENV=development" >> /opt/email-agent/Frontend/.env.dev.local
               fi
               sudo chown $VM_USER_VAL:$VM_USER_VAL /opt/email-agent/Frontend/.env.dev.local
@@ -150,6 +150,23 @@ jobs:
                 sed -i "s|SESSION_SECRET=.*|SESSION_SECRET=$DEV_SESSION_SECRET|" /opt/email-agent/Backend/.env.dev || \
                 echo "SESSION_SECRET=$DEV_SESSION_SECRET" >> /opt/email-agent/Backend/.env.dev
             fi
+            
+            # Always ensure FRONTEND_URL and GOOGLE_REDIRECT_URI are set to production values
+            echo "Ensuring FRONTEND_URL is set to production URL..."
+            grep -q "FRONTEND_URL" /opt/email-agent/Backend/.env.dev && \
+              sed -i "s|FRONTEND_URL=.*|FRONTEND_URL=https://emailagent.duckdns.org|" /opt/email-agent/Backend/.env.dev || \
+              echo "FRONTEND_URL=https://emailagent.duckdns.org" >> /opt/email-agent/Backend/.env.dev
+            
+            echo "Ensuring GOOGLE_REDIRECT_URI is set to production URL..."
+            grep -q "GOOGLE_REDIRECT_URI" /opt/email-agent/Backend/.env.dev && \
+              sed -i "s|GOOGLE_REDIRECT_URI=.*|GOOGLE_REDIRECT_URI=https://emailagent.duckdns.org/api/auth/callback|" /opt/email-agent/Backend/.env.dev || \
+              echo "GOOGLE_REDIRECT_URI=https://emailagent.duckdns.org/api/auth/callback" >> /opt/email-agent/Backend/.env.dev
+            
+            # Ensure Frontend API URL is set correctly
+            echo "Ensuring NEXT_PUBLIC_API_URL is set to production URL..."
+            grep -q "NEXT_PUBLIC_API_URL" /opt/email-agent/Frontend/.env.dev.local && \
+              sed -i "s|NEXT_PUBLIC_API_URL=.*|NEXT_PUBLIC_API_URL=https://emailagent.duckdns.org/api|" /opt/email-agent/Frontend/.env.dev.local || \
+              echo "NEXT_PUBLIC_API_URL=https://emailagent.duckdns.org/api" >> /opt/email-agent/Frontend/.env.dev.local
             
             # Also create fallback .env files if they don't exist
             if [ ! -f "/opt/email-agent/Backend/.env" ]; then
