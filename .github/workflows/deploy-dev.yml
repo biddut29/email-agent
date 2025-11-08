@@ -248,11 +248,15 @@ jobs:
                 echo "✅ Port 3000 is listening: $PORT_3000"
               else
                 echo "❌ Port 3000 is NOT listening"
+                echo "   Checking frontend container logs..."
+                sudo docker-compose -f docker-compose.dev.yml logs --tail=20 frontend 2>/dev/null || true
               fi
               if [ -n "$PORT_8000" ]; then
                 echo "✅ Port 8000 is listening: $PORT_8000"
               else
                 echo "❌ Port 8000 is NOT listening"
+                echo "   Checking backend container logs..."
+                sudo docker-compose -f docker-compose.dev.yml logs --tail=20 backend 2>/dev/null || true
               fi
             elif command -v netstat &> /dev/null; then
               PORT_3000=$(sudo netstat -tlnp 2>/dev/null | grep ':3000' || echo "")
@@ -261,13 +265,53 @@ jobs:
                 echo "✅ Port 3000 is listening: $PORT_3000"
               else
                 echo "❌ Port 3000 is NOT listening"
+                echo "   Checking frontend container logs..."
+                sudo docker-compose -f docker-compose.dev.yml logs --tail=20 frontend 2>/dev/null || true
               fi
               if [ -n "$PORT_8000" ]; then
                 echo "✅ Port 8000 is listening: $PORT_8000"
               else
                 echo "❌ Port 8000 is NOT listening"
+                echo "   Checking backend container logs..."
+                sudo docker-compose -f docker-compose.dev.yml logs --tail=20 backend 2>/dev/null || true
               fi
             fi
+            
+            # Check cloud firewall / security groups
+            echo ""
+            echo "🔥 IMPORTANT: Check Cloud Provider Firewall Rules"
+            echo "================================================"
+            echo "The VM is not accessible from the internet. This is likely a firewall issue."
+            echo ""
+            echo "For Azure VM:"
+            echo "  1. Go to Azure Portal → Virtual Machines → Your VM"
+            echo "  2. Click 'Networking' in the left menu"
+            echo "  3. Click 'Add inbound port rule'"
+            echo "  4. Add rules for:"
+            echo "     - Port 3000 (HTTP) - Allow from Any source"
+            echo "     - Port 8000 (HTTP) - Allow from Any source"
+            echo "     - Port 22 (SSH) - Allow from Any source (if needed)"
+            echo ""
+            echo "For AWS EC2:"
+            echo "  1. Go to EC2 → Security Groups → Select your instance's security group"
+            echo "  2. Click 'Edit inbound rules'"
+            echo "  3. Add rules for:"
+            echo "     - Port 3000 (Custom TCP) - Source: 0.0.0.0/0"
+            echo "     - Port 8000 (Custom TCP) - Source: 0.0.0.0/0"
+            echo "     - Port 22 (SSH) - Source: 0.0.0.0/0 (if needed)"
+            echo ""
+            echo "For GCP:"
+            echo "  1. Go to VPC Network → Firewall rules"
+            echo "  2. Create rules allowing:"
+            echo "     - Port 3000 (tcp:3000) - Source: 0.0.0.0/0"
+            echo "     - Port 8000 (tcp:8000) - Source: 0.0.0.0/0"
+            echo "     - Port 22 (tcp:22) - Source: 0.0.0.0/0 (if needed)"
+            echo ""
+            echo "Current VM IP: $VM_PUBLIC_IP"
+            echo "Services should be accessible at:"
+            echo "  - Frontend: http://$VM_PUBLIC_IP:3000"
+            echo "  - Backend: http://$VM_PUBLIC_IP:8000"
+            echo ""
             
             # Test local connections
             echo ""
@@ -350,7 +394,21 @@ jobs:
             echo "🧹 Cleaning up old images..."
             sudo docker image prune -f
             
+            echo ""
+            echo "================================================"
             echo "✅ Deployment completed successfully!"
+            echo "================================================"
+            echo ""
+            echo "⚠️  IMPORTANT: If you cannot access the site from the internet,"
+            echo "   check your cloud provider's firewall/security group rules."
+            echo ""
+            echo "   The services are running, but may be blocked by:"
+            echo "   - Azure: Network Security Group (NSG) rules"
+            echo "   - AWS: Security Group inbound rules"
+            echo "   - GCP: VPC Firewall rules"
+            echo ""
+            echo "   Ensure ports 3000 and 8000 are open for inbound traffic."
+            echo ""
           DEPLOY_SCRIPT
       
       - name: Health Check
