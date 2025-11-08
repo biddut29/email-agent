@@ -49,9 +49,10 @@ app = FastAPI(
 )
 
 # Add CORS middleware with optimized settings
+# CORS origins are configured in config.py and can be overridden via CORS_ORIGINS env var
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001"],  # Next.js default ports
+    allow_origins=config.CORS_ORIGINS,  # Configurable via CORS_ORIGINS env var
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],  # Explicit methods (reduces preflight)
     allow_headers=["Content-Type", "Authorization", "Accept"],  # Explicit headers (reduces preflight)

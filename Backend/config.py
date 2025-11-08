@@ -68,3 +68,13 @@ GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8000/ap
 SESSION_SECRET = os.getenv("SESSION_SECRET", "change-this-to-a-random-secret-key")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
+# CORS Settings - Allow multiple origins (comma-separated)
+CORS_ORIGINS = os.getenv("CORS_ORIGINS", "").split(",") if os.getenv("CORS_ORIGINS") else [
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "https://74.242.217.91:3000",
+    "http://74.242.217.91:3000",
+]
+# Filter out empty strings
+CORS_ORIGINS = [origin.strip() for origin in CORS_ORIGINS if origin.strip()]
+
