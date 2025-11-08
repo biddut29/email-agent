@@ -34,13 +34,14 @@ jobs:
           GITHUB_REPO: ${{ github.repository }}
           GITHUB_TOKEN: ${{ secrets.GITHUBTOKEN }}
         run: |
-          echo "🌐 Deploying to VM: $VM_HOST"
+          echo "🌐 Deploying to VM (Public IP): $VM_HOST"
           echo "👤 VM User: $VM_USER"
-          sshpass -p "$VM_PASSWORD" ssh -o StrictHostKeyChecking=no $VM_USER@$VM_HOST << DEPLOY_SCRIPT
+          sshpass -p "$VM_PASSWORD" ssh -o StrictHostKeyChecking=no $VM_USER@$VM_HOST VM_PUBLIC_IP="$VM_HOST" VM_USER_VAL="$VM_USER" GITHUB_TOKEN_VAL="${GITHUB_TOKEN}" GITHUB_REPO_VAL="${GITHUB_REPO}" bash << 'DEPLOY_SCRIPT'
             set -e
             
             echo "🚀 Starting deployment..."
-            echo "🌐 VM IP: $(hostname -I | awk '{print $1}')"
+            echo "🌐 VM Public IP: $VM_PUBLIC_IP"
+            echo "🌐 VM Internal IP: $(hostname -I | awk '{print $1}')"
             echo "👤 Current User: $(whoami)"
             
             # Navigate to project directory or create and clone
@@ -54,13 +55,26 @@ jobs:
             else
               echo "📁 Creating project directory and cloning repository..."
               sudo mkdir -p /opt/email-agent
-              sudo chown $VM_USER:$VM_USER /opt/email-agent
+              sudo chown $VM_USER_VAL:$VM_USER_VAL /opt/email-agent
               cd /opt/email-agent
               
               # Clone the repository using token
               echo "📥 Cloning repository..."
-              git clone https://${GITHUB_TOKEN}@github.com/${GITHUB_REPO}.git .
+              git clone https://${GITHUB_TOKEN_VAL}@github.com/${GITHUB_REPO_VAL}.git .
               git checkout dev
+            fi
+            
+            # Create .env files if they don't exist (to avoid docker-compose errors)
+            echo "📝 Ensuring .env files exist..."
+            if [ ! -f "/opt/email-agent/Backend/.env" ]; then
+              echo "Creating Backend/.env file..."
+              touch /opt/email-agent/Backend/.env
+              sudo chown $VM_USER_VAL:$VM_USER_VAL /opt/email-agent/Backend/.env
+            fi
+            if [ ! -f "/opt/email-agent/Frontend/.env.local" ]; then
+              echo "Creating Frontend/.env.local file..."
+              touch /opt/email-agent/Frontend/.env.local
+              sudo chown $VM_USER_VAL:$VM_USER_VAL /opt/email-agent/Frontend/.env.local
             fi
             
             # Ensure Docker and Docker Compose are installed
@@ -68,7 +82,7 @@ jobs:
               echo "📦 Installing Docker..."
               curl -fsSL https://get.docker.com -o get-docker.sh
               sudo sh get-docker.sh
-              sudo usermod -aG docker $VM_USER
+              sudo usermod -aG docker $VM_USER_VAL
               rm get-docker.sh
             fi
             
