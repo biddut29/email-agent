@@ -1,0 +1,74 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./Backend
+      dockerfile: Dockerfile.dev
+    container_name: email-agent-backend-dev
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./Backend:/app
+      - ./Backend/chroma_db:/app/chroma_db
+      - backend_venv:/app/venv  # Preserve venv between restarts
+    environment:
+      - MONGODB_URI=mongodb://mongodb:27017/email_agent
+      - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT}
+      - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY}
+      - AZURE_OPENAI_DEPLOYMENT_NAME=${AZURE_OPENAI_DEPLOYMENT_NAME}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - GOOGLE_REDIRECT_URI=${GOOGLE_REDIRECT_URI}
+      - SESSION_SECRET=${SESSION_SECRET}
+      - FRONTEND_URL=${FRONTEND_URL}
+    env_file:
+      - ./Backend/.env
+    depends_on:
+      - mongodb
+    networks:
+      - email-agent-network
+    command: uvicorn api_server:app --host 0.0.0.0 --port 8000 --reload
+
+  frontend:
+    build:
+      context: ./Frontend
+      dockerfile: Dockerfile.dev
+    container_name: email-agent-frontend-dev
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./Frontend:/app
+      - /app/node_modules  # Prevent overwriting node_modules
+      - /app/.next  # Prevent overwriting .next build
+    environment:
+      - NODE_ENV=development
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    env_file:
+      - ./Frontend/.env.local
+    depends_on:
+      - backend
+    networks:
+      - email-agent-network
+
+  mongodb:
+    image: mongo:7
+    container_name: email-agent-mongodb-dev
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - email-agent-network
+
+networks:
+  email-agent-network:
+    driver: bridge
+
+volumes:
+  mongodb_data:
+  backend_venv:
+
