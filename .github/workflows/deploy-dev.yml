@@ -237,6 +237,10 @@ jobs:
             export DOCKER_BUILDKIT=1
             export COMPOSE_DOCKER_CLI_BUILD=1
             
+            # Set NEXT_PUBLIC_API_URL for frontend build (required at build time for Next.js)
+            export NEXT_PUBLIC_API_URL=https://emailagent.duckdns.org
+            echo "📦 Setting NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL for frontend build"
+            
             # Build new images WITH cache (much faster!)
             echo "🔨 Building Docker images (with cache)..."
             if sudo docker-compose -f docker-compose.dev.yml build; then

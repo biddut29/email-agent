@@ -39,6 +39,8 @@ services:
     build:
       context: ./Frontend
       dockerfile: Dockerfile.dev
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://emailagent.duckdns.org}
     container_name: email-agent-frontend-dev
     restart: unless-stopped
     # Add memory limits
