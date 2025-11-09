@@ -7,11 +7,11 @@ import os
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
-# Try .env.dev first (for dev environment), then fall back to .env
-# Use override=True to ensure .env.dev values take precedence over empty env vars from docker-compose
-load_dotenv('.env.dev', override=True)  # Try dev environment file first, override existing
-load_dotenv('.env', override=True)  # Fall back to regular .env file
-load_dotenv()  # Also load from environment variables (but don't override .env.dev values)
+# Default to .env (local), then override with .env.dev if it exists (dev environment)
+# This way .env is the default, and .env.dev only overrides when present
+load_dotenv('.env', override=False)  # Load .env first as default (local environment)
+load_dotenv('.env.dev', override=True)  # Override with .env.dev if it exists (dev environment)
+load_dotenv()  # Also load from environment variables (but don't override .env/.env.dev values)
 
 # Email Credentials
 EMAIL_ADDRESS = os.getenv("EMAIL_ADDRESS", "bidduttest@gmail.com")

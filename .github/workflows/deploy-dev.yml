@@ -132,17 +132,22 @@ jobs:
                 sed -i "s|AZURE_OPENAI_DEPLOYMENT=.*|AZURE_OPENAI_DEPLOYMENT=$DEV_AZURE_OPENAI_DEPLOYMENT_NAME|" /opt/email-agent/Backend/.env.dev || \
                 echo "AZURE_OPENAI_DEPLOYMENT=$DEV_AZURE_OPENAI_DEPLOYMENT_NAME" >> /opt/email-agent/Backend/.env.dev
             fi
+            # Set Google OAuth credentials from GitHub secrets
             if [ -n "$DEV_GOOGLE_CLIENT_ID" ]; then
-              echo "Updating Backend/.env.dev with Google Client ID..."
+              echo "Setting Backend/.env.dev with Google Client ID from secrets..."
               grep -q "GOOGLE_CLIENT_ID" /opt/email-agent/Backend/.env.dev && \
                 sed -i "s|GOOGLE_CLIENT_ID=.*|GOOGLE_CLIENT_ID=$DEV_GOOGLE_CLIENT_ID|" /opt/email-agent/Backend/.env.dev || \
                 echo "GOOGLE_CLIENT_ID=$DEV_GOOGLE_CLIENT_ID" >> /opt/email-agent/Backend/.env.dev
+            else
+              echo "⚠️  DEV_GOOGLE_CLIENT_ID secret not set. OAuth login will not work."
             fi
             if [ -n "$DEV_GOOGLE_CLIENT_SECRET" ]; then
-              echo "Updating Backend/.env.dev with Google Client Secret..."
+              echo "Setting Backend/.env.dev with Google Client Secret from secrets..."
               grep -q "GOOGLE_CLIENT_SECRET" /opt/email-agent/Backend/.env.dev && \
                 sed -i "s|GOOGLE_CLIENT_SECRET=.*|GOOGLE_CLIENT_SECRET=$DEV_GOOGLE_CLIENT_SECRET|" /opt/email-agent/Backend/.env.dev || \
                 echo "GOOGLE_CLIENT_SECRET=$DEV_GOOGLE_CLIENT_SECRET" >> /opt/email-agent/Backend/.env.dev
+            else
+              echo "⚠️  DEV_GOOGLE_CLIENT_SECRET secret not set. OAuth login will not work."
             fi
             if [ -n "$DEV_SESSION_SECRET" ]; then
               echo "Updating Backend/.env.dev with Session Secret..."

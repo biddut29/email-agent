@@ -54,8 +54,9 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=config.CORS_ORIGINS,  # Configurable via CORS_ORIGINS env var
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],  # Explicit methods (reduces preflight)
-    allow_headers=["Content-Type", "Authorization", "Accept"],  # Explicit headers (reduces preflight)
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],  # Explicit methods (reduces preflight)
+    allow_headers=["Content-Type", "Authorization", "Accept", "Cookie", "X-Requested-With"],  # Explicit headers (reduces preflight)
+    expose_headers=["*"],
     max_age=3600,  # Cache preflight response for 1 hour
 )
 
@@ -242,23 +243,36 @@ async def login():
     try:
         # Validate OAuth configuration
         if not auth_manager.client_id or not auth_manager.client_secret:
-            raise HTTPException(
-                status_code=500, 
-                detail="OAuth credentials not configured. Please check GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in .env"
-            )
+            # Return a clear error that OAuth is not configured, but don't use 500
+            return {
+                "success": False,
+                "error": "OAuth not configured",
+                "message": "Google OAuth credentials are not configured. Please use App Password login instead, or configure GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in .env",
+                "oauth_available": False
+            }
         
         state = secrets.token_urlsafe(32)
         auth_url, _ = auth_manager.get_authorization_url(state=state)
         print(f"✓ OAuth login initiated - Client ID: {auth_manager.client_id[:20]}...")
-        return {"success": True, "auth_url": auth_url, "state": state}
+        return {"success": True, "auth_url": auth_url, "state": state, "oauth_available": True}
     except ValueError as e:
         print(f"❌ OAuth configuration error: {e}")
-        raise HTTPException(status_code=500, detail=f"OAuth configuration error: {str(e)}")
+        return {
+            "success": False,
+            "error": "OAuth configuration error",
+            "message": str(e),
+            "oauth_available": False
+        }
     except Exception as e:
         print(f"❌ Login error: {e}")
         import traceback
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Failed to initiate login: {str(e)}")
+        return {
+            "success": False,
+            "error": "Failed to initiate login",
+            "message": str(e),
+            "oauth_available": False
+        }
 
 
 @app.post("/api/auth/login-password")
@@ -409,13 +423,12 @@ async def oauth_callback(code: str, state: Optional[str] = None):
         redirect_url = f"{frontend_url}/auth/callback?token={session_token}"
         print(f"🔗 OAuth callback redirecting to: {redirect_url}")
         print(f"📋 Using FRONTEND_URL from config: {frontend_url}")
-        print(f"🔍 Config module path: {config.__file__}")
-        print(f"🔍 FRONTEND_URL value: {repr(frontend_url)}")
-        if 'localhost' in redirect_url:
-            print(f"⚠️ WARNING: Redirect URL contains localhost! This should not happen.")
-            # Force production URL
-            redirect_url = f"https://emailagent.duckdns.org/auth/callback?token={session_token}"
-            print(f"🔧 FORCED redirect to: {redirect_url}")
+        
+        # Use the FRONTEND_URL from config - it's already loaded from the correct .env file
+        # .env.dev takes precedence if it exists (dev environment)
+        # .env is used if .env.dev doesn't exist (local environment)
+        # No need to override - trust the environment configuration
+        
         return RedirectResponse(
             url=redirect_url,
             status_code=302
