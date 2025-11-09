@@ -167,6 +167,14 @@ jobs:
               sed -i "s|GOOGLE_REDIRECT_URI=.*|GOOGLE_REDIRECT_URI=https://emailagent.duckdns.org/api/auth/callback|" /opt/email-agent/Backend/.env.dev || \
               echo "GOOGLE_REDIRECT_URI=https://emailagent.duckdns.org/api/auth/callback" >> /opt/email-agent/Backend/.env.dev
             
+            # Restart backend to pick up OAuth credentials if they were set
+            if [ -n "$DEV_GOOGLE_CLIENT_ID" ] && [ -n "$DEV_GOOGLE_CLIENT_SECRET" ]; then
+              echo "🔄 Restarting backend container to load OAuth credentials..."
+              sudo docker-compose -f docker-compose.dev.yml restart backend || true
+              echo "⏳ Waiting for backend to restart..."
+              sleep 5
+            fi
+            
             # Ensure Frontend API URL is set correctly
             echo "Ensuring NEXT_PUBLIC_API_URL is set to production URL..."
             grep -q "NEXT_PUBLIC_API_URL" /opt/email-agent/Frontend/.env.dev.local && \
