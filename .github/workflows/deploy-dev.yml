@@ -261,13 +261,14 @@ jobs:
             echo "⏳ Waiting for services to start..."
             sleep 15
             
-            # Restart backend to pick up OAuth credentials if they were set
+            # Recreate backend to pick up OAuth credentials if they were set
+            # Note: docker-compose restart doesn't reload env_file, so we need to recreate
             if [ -n "$DEV_GOOGLE_CLIENT_ID" ] && [ -n "$DEV_GOOGLE_CLIENT_SECRET" ]; then
-              echo "🔄 Restarting backend container to load OAuth credentials..."
-              sudo docker-compose -f docker-compose.dev.yml restart backend || true
-              echo "⏳ Waiting for backend to restart..."
-              sleep 8
-              echo "✅ Backend restarted with OAuth credentials"
+              echo "🔄 Recreating backend container to load OAuth credentials..."
+              sudo docker-compose -f docker-compose.dev.yml up -d --force-recreate --no-deps backend || true
+              echo "⏳ Waiting for backend to start..."
+              sleep 10
+              echo "✅ Backend recreated with OAuth credentials"
             fi
             
             # Check container status
