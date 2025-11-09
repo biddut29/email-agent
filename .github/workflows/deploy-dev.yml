@@ -167,11 +167,18 @@ jobs:
               sed -i "s|GOOGLE_REDIRECT_URI=.*|GOOGLE_REDIRECT_URI=https://emailagent.duckdns.org/api/auth/callback|" /opt/email-agent/Backend/.env.dev || \
               echo "GOOGLE_REDIRECT_URI=https://emailagent.duckdns.org/api/auth/callback" >> /opt/email-agent/Backend/.env.dev
             
-            # Ensure Frontend API URL is set correctly
+            # Ensure Frontend API URL is set correctly (without /api suffix - it's added by the API client)
             echo "Ensuring NEXT_PUBLIC_API_URL is set to production URL..."
             grep -q "NEXT_PUBLIC_API_URL" /opt/email-agent/Frontend/.env.dev.local && \
-              sed -i "s|NEXT_PUBLIC_API_URL=.*|NEXT_PUBLIC_API_URL=https://emailagent.duckdns.org/api|" /opt/email-agent/Frontend/.env.dev.local || \
-              echo "NEXT_PUBLIC_API_URL=https://emailagent.duckdns.org/api" >> /opt/email-agent/Frontend/.env.dev.local
+              sed -i "s|NEXT_PUBLIC_API_URL=.*|NEXT_PUBLIC_API_URL=https://emailagent.duckdns.org|" /opt/email-agent/Frontend/.env.dev.local || \
+              echo "NEXT_PUBLIC_API_URL=https://emailagent.duckdns.org" >> /opt/email-agent/Frontend/.env.dev.local
+            
+            # Recreate frontend to pick up API URL change (Next.js needs rebuild for NEXT_PUBLIC_* vars)
+            echo "🔄 Recreating frontend container to load updated API URL..."
+            sudo docker-compose -f docker-compose.dev.yml up -d --force-recreate --no-deps frontend || true
+            echo "⏳ Waiting for frontend to start..."
+            sleep 10
+            echo "✅ Frontend recreated with updated API URL"
             
             # Also create fallback .env files if they don't exist
             if [ ! -f "/opt/email-agent/Backend/.env" ]; then
