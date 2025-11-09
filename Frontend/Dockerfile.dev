@@ -1,0 +1,28 @@
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Accept build argument for API URL
+ARG NEXT_PUBLIC_API_URL=http://localhost:8000
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+
+# Copy package files
+COPY package*.json ./
+
+# Install dependencies with npm cache and use npm ci for faster, reliable installs
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci
+
+# Copy source code
+COPY . .
+
+# Build Next.js for production (NEXT_PUBLIC_* vars are embedded at build time)
+RUN npm run build
+
+# Expose port
+EXPOSE 3000
+
+# Run in production mode (more stable behind reverse proxy)
+# The start script in package.json uses --hostname 0.0.0.0 to bind to all interfaces
+CMD ["npm", "start"]
+

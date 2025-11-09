@@ -49,12 +49,14 @@ app = FastAPI(
 )
 
 # Add CORS middleware with optimized settings
+# CORS origins are configured in config.py and can be overridden via CORS_ORIGINS env var
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001"],  # Next.js default ports
+    allow_origins=config.CORS_ORIGINS,  # Configurable via CORS_ORIGINS env var
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],  # Explicit methods (reduces preflight)
-    allow_headers=["Content-Type", "Authorization", "Accept"],  # Explicit headers (reduces preflight)
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],  # Explicit methods (reduces preflight)
+    allow_headers=["Content-Type", "Authorization", "Accept", "Cookie", "X-Requested-With"],  # Explicit headers (reduces preflight)
+    expose_headers=["*"],
     max_age=3600,  # Cache preflight response for 1 hour
 )
 
@@ -241,23 +243,36 @@ async def login():
     try:
         # Validate OAuth configuration
         if not auth_manager.client_id or not auth_manager.client_secret:
-            raise HTTPException(
-                status_code=500, 
-                detail="OAuth credentials not configured. Please check GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in .env"
-            )
+            # Return a clear error that OAuth is not configured, but don't use 500
+            return {
+                "success": False,
+                "error": "OAuth not configured",
+                "message": "Google OAuth credentials are not configured. Please use App Password login instead, or configure GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in .env",
+                "oauth_available": False
+            }
         
         state = secrets.token_urlsafe(32)
         auth_url, _ = auth_manager.get_authorization_url(state=state)
         print(f"✓ OAuth login initiated - Client ID: {auth_manager.client_id[:20]}...")
-        return {"success": True, "auth_url": auth_url, "state": state}
+        return {"success": True, "auth_url": auth_url, "state": state, "oauth_available": True}
     except ValueError as e:
         print(f"❌ OAuth configuration error: {e}")
-        raise HTTPException(status_code=500, detail=f"OAuth configuration error: {str(e)}")
+        return {
+            "success": False,
+            "error": "OAuth configuration error",
+            "message": str(e),
+            "oauth_available": False
+        }
     except Exception as e:
         print(f"❌ Login error: {e}")
         import traceback
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Failed to initiate login: {str(e)}")
+        return {
+            "success": False,
+            "error": "Failed to initiate login",
+            "message": str(e),
+            "oauth_available": False
+        }
 
 
 @app.post("/api/auth/login-password")
@@ -401,9 +416,21 @@ async def oauth_callback(code: str, state: Optional[str] = None):
         }
         
         # Redirect to frontend with token
+        # Force reload config to ensure we have the latest value
+        import importlib
+        importlib.reload(config)
         frontend_url = config.FRONTEND_URL
+        redirect_url = f"{frontend_url}/auth/callback?token={session_token}"
+        print(f"🔗 OAuth callback redirecting to: {redirect_url}")
+        print(f"📋 Using FRONTEND_URL from config: {frontend_url}")
+        
+        # Use the FRONTEND_URL from config - it's already loaded from the correct .env file
+        # .env.dev takes precedence if it exists (dev environment)
+        # .env is used if .env.dev doesn't exist (local environment)
+        # No need to override - trust the environment configuration
+        
         return RedirectResponse(
-            url=f"{frontend_url}/auth/callback?token={session_token}",
+            url=redirect_url,
             status_code=302
         )
     except Exception as e:
@@ -416,26 +443,39 @@ async def oauth_callback(code: str, state: Optional[str] = None):
 @app.get("/api/auth/me")
 async def get_current_user(request: Request, session_token: Optional[str] = Cookie(None)):
     """Get current authenticated user"""
+    print(f"🔍 Auth check - Cookie token: {session_token[:50] if session_token else 'None'}...")
+    
     # Also check Authorization header as fallback
     if not session_token:
         # Try to get from Authorization header
         auth_header = request.headers.get('Authorization', '')
+        print(f"🔍 Auth check - Authorization header: {auth_header[:50] if auth_header else 'None'}...")
         if auth_header and auth_header.startswith('Bearer '):
             session_token = auth_header.replace('Bearer ', '')
+            print(f"🔍 Auth check - Extracted token from Bearer header")
         # Also try query parameter
         if not session_token:
             session_token = request.query_params.get('token')
+            print(f"🔍 Auth check - Query param token: {session_token[:50] if session_token else 'None'}...")
     
     if not session_token:
+        print(f"❌ Auth check - No token found")
         raise HTTPException(status_code=401, detail="Not authenticated")
     
     try:
+        print(f"🔍 Auth check - Attempting to load session token...")
         session_data = session_serializer.loads(session_token, max_age=604800)  # 7 days
+        print(f"🔍 Auth check - Session data loaded: account_id={session_data.get('account_id')}")
+        
         session = active_sessions.get(session_token)
+        print(f"🔍 Auth check - Active sessions count: {len(active_sessions)}")
+        print(f"🔍 Auth check - Session found in active_sessions: {session is not None}")
         
         if not session:
+            print(f"❌ Auth check - Session not found in active_sessions")
             raise HTTPException(status_code=401, detail="Session expired")
         
+        print(f"✅ Auth check - Success for account_id={session['account_id']}, email={session['email']}")
         return {
             "success": True,
             "user": {
@@ -444,8 +484,12 @@ async def get_current_user(request: Request, session_token: Optional[str] = Cook
                 "name": session.get('name', '')
             }
         }
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"❌ Auth check error: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=401, detail="Invalid session")
 
 

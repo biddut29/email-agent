@@ -7,7 +7,11 @@ import os
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
-load_dotenv()
+# Default to .env (local), then override with .env.dev if it exists (dev environment)
+# This way .env is the default, and .env.dev only overrides when present
+load_dotenv('.env', override=False)  # Load .env first as default (local environment)
+load_dotenv('.env.dev', override=True)  # Override with .env.dev if it exists (dev environment)
+load_dotenv()  # Also load from environment variables (but don't override .env/.env.dev values)
 
 # Email Credentials
 EMAIL_ADDRESS = os.getenv("EMAIL_ADDRESS", "bidduttest@gmail.com")
@@ -67,4 +71,13 @@ GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
 GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8000/api/auth/callback")
 SESSION_SECRET = os.getenv("SESSION_SECRET", "change-this-to-a-random-secret-key")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+
+# CORS Settings - Allow multiple origins (comma-separated)
+CORS_ORIGINS = os.getenv("CORS_ORIGINS", "").split(",") if os.getenv("CORS_ORIGINS") else [
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "https://emailagent.duckdns.org",
+]
+# Filter out empty strings
+CORS_ORIGINS = [origin.strip() for origin in CORS_ORIGINS if origin.strip()]
 

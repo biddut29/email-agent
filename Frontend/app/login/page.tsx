@@ -12,10 +12,11 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 export default function LoginPage() {
   const [loading, setLoading] = useState(false);
-  const [loginMethod, setLoginMethod] = useState<'sso' | 'password'>('sso');
+  const [loginMethod, setLoginMethod] = useState<'sso' | 'password'>('sso'); // Default to OAuth login
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [oauthAvailable, setOauthAvailable] = useState(false);
   const router = useRouter();
 
   useEffect(() => {
@@ -32,6 +33,24 @@ export default function LoginPage() {
           localStorage.removeItem('session_token');
         });
     }
+    
+    // Check if OAuth is available
+    fetch(`${API_BASE_URL}/api/auth/login`)
+      .then(res => res.json())
+      .then(data => {
+        const isAvailable = data.oauth_available === true;
+        setOauthAvailable(isAvailable);
+        // If OAuth is not available and we're on SSO, switch to password login
+        if (!isAvailable) {
+          setLoginMethod('password');
+        }
+      })
+      .catch(() => {
+        // If check fails, assume OAuth is not available
+        setOauthAvailable(false);
+        // Switch to password login
+        setLoginMethod('password');
+      });
   }, [router]);
 
   const handleGoogleLogin = async () => {
@@ -45,12 +64,15 @@ export default function LoginPage() {
         // Redirect to Google OAuth
         window.location.href = data.auth_url;
       } else {
-        setError('Failed to initiate login');
+        // OAuth not available, show helpful message
+        setError(data.message || 'Google OAuth is not configured. Please use App Password login instead.');
+        setLoginMethod('password'); // Switch to password login
         setLoading(false);
       }
     } catch (error) {
       console.error('Login error:', error);
-      setError('Failed to connect to server');
+      setError('Failed to connect to server. Please use App Password login instead.');
+      setLoginMethod('password'); // Switch to password login
       setLoading(false);
     }
   };
@@ -95,34 +117,36 @@ export default function LoginPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           {/* Login Method Tabs */}
-          <div className="flex gap-2 border-b">
-            <button
-              onClick={() => {
-                setLoginMethod('sso');
-                setError('');
-              }}
-              className={`flex-1 py-2 px-4 text-sm font-medium transition-colors ${
-                loginMethod === 'sso'
-                  ? 'border-b-2 border-primary text-primary'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              Sign in with Google
-            </button>
-            <button
-              onClick={() => {
-                setLoginMethod('password');
-                setError('');
-              }}
-              className={`flex-1 py-2 px-4 text-sm font-medium transition-colors ${
-                loginMethod === 'password'
-                  ? 'border-b-2 border-primary text-primary'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              App Password
-            </button>
-          </div>
+          {oauthAvailable && (
+            <div className="flex gap-2 border-b">
+              <button
+                onClick={() => {
+                  setLoginMethod('sso');
+                  setError('');
+                }}
+                className={`flex-1 py-2 px-4 text-sm font-medium transition-colors ${
+                  loginMethod === 'sso'
+                    ? 'border-b-2 border-primary text-primary'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                Sign in with Google
+              </button>
+              <button
+                onClick={() => {
+                  setLoginMethod('password');
+                  setError('');
+                }}
+                className={`flex-1 py-2 px-4 text-sm font-medium transition-colors ${
+                  loginMethod === 'password'
+                    ? 'border-b-2 border-primary text-primary'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                App Password
+              </button>
+            </div>
+          )}
 
           {/* Error Message */}
           {error && (
@@ -132,7 +156,7 @@ export default function LoginPage() {
           )}
 
           {/* SSO Login */}
-          {loginMethod === 'sso' && (
+          {loginMethod === 'sso' && oauthAvailable && (
             <div className="space-y-4">
               <Button
                 onClick={handleGoogleLogin}

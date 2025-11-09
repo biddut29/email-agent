@@ -1,0 +1,559 @@
+name: Deploy to Dev (Docker + SSH)
+
+on:
+  push:
+    branches:
+      - dev
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Install SSH and sshpass
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y sshpass
+      
+      - name: Add VM to known hosts
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          ssh-keyscan -H ${{ secrets.VM_HOST }} >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+      
+      - name: Deploy to VM via SSH
+        env:
+          VM_USER: ${{ secrets.VM_USER }}
+          VM_PASSWORD: ${{ secrets.VM_PASSWORD }}
+          VM_HOST: ${{ secrets.VM_HOST }}
+          GITHUB_REPO: ${{ github.repository }}
+          GITHUB_TOKEN: ${{ secrets.GITHUBTOKEN }}
+          # Dev environment variables (can be overridden by secrets)
+          DEV_AZURE_OPENAI_ENDPOINT: ${{ secrets.DEV_AZURE_OPENAI_ENDPOINT }}
+          DEV_AZURE_OPENAI_API_KEY: ${{ secrets.DEV_AZURE_OPENAI_API_KEY }}
+          DEV_AZURE_OPENAI_DEPLOYMENT_NAME: ${{ secrets.DEV_AZURE_OPENAI_DEPLOYMENT_NAME }}
+          DEV_GOOGLE_CLIENT_ID: ${{ secrets.DEV_GOOGLE_CLIENT_ID }}
+          DEV_GOOGLE_CLIENT_SECRET: ${{ secrets.DEV_GOOGLE_CLIENT_SECRET }}
+          DEV_SESSION_SECRET: ${{ secrets.DEV_SESSION_SECRET }}
+        run: |
+          echo "🌐 Deploying to VM (Public IP): $VM_HOST"
+          echo "👤 VM User: $VM_USER"
+          sshpass -p "$VM_PASSWORD" ssh -o StrictHostKeyChecking=no $VM_USER@$VM_HOST \
+            VM_PUBLIC_IP="$VM_HOST" \
+            VM_USER_VAL="$VM_USER" \
+            GITHUB_TOKEN_VAL="${GITHUB_TOKEN}" \
+            GITHUB_REPO_VAL="${GITHUB_REPO}" \
+            DEV_AZURE_OPENAI_ENDPOINT="${DEV_AZURE_OPENAI_ENDPOINT}" \
+            DEV_AZURE_OPENAI_API_KEY="${DEV_AZURE_OPENAI_API_KEY}" \
+            DEV_AZURE_OPENAI_DEPLOYMENT_NAME="${DEV_AZURE_OPENAI_DEPLOYMENT_NAME}" \
+            DEV_GOOGLE_CLIENT_ID="${DEV_GOOGLE_CLIENT_ID}" \
+            DEV_GOOGLE_CLIENT_SECRET="${DEV_GOOGLE_CLIENT_SECRET}" \
+            DEV_SESSION_SECRET="${DEV_SESSION_SECRET}" \
+            bash << 'DEPLOY_SCRIPT'
+            set -e
+            
+            echo "🚀 Starting deployment..."
+            echo "🌐 VM Public IP: $VM_PUBLIC_IP"
+            echo "🌐 VM Internal IP: $(hostname -I | awk '{print $1}')"
+            echo "👤 Current User: $(whoami)"
+            
+            # Navigate to project directory or create and clone
+            if [ -d "/opt/email-agent/.git" ]; then
+              echo "📁 Project directory exists, navigating..."
+              cd /opt/email-agent
+              echo "📥 Pulling latest code from dev branch..."
+              git fetch origin
+              git checkout dev
+              git reset --hard origin/dev
+            else
+              echo "📁 Creating project directory and cloning repository..."
+              sudo mkdir -p /opt/email-agent
+              sudo chown $VM_USER_VAL:$VM_USER_VAL /opt/email-agent
+              cd /opt/email-agent
+              
+              # Clone the repository using token
+              echo "📥 Cloning repository..."
+              git clone https://${GITHUB_TOKEN_VAL}@github.com/${GITHUB_REPO_VAL}.git .
+              git checkout dev
+            fi
+            
+            # Create .env files for dev environment if they don't exist
+            echo "📝 Setting up dev environment files..."
+            
+            # Backend .env.dev
+            if [ ! -f "/opt/email-agent/Backend/.env.dev" ]; then
+              echo "Creating Backend/.env.dev file from template..."
+              if [ -f "/opt/email-agent/Backend/env.dev.template" ]; then
+                cp /opt/email-agent/Backend/env.dev.template /opt/email-agent/Backend/.env.dev
+              else
+                touch /opt/email-agent/Backend/.env.dev
+                echo "MONGODB_URI=mongodb://mongodb:27017/email_agent" >> /opt/email-agent/Backend/.env.dev
+                echo "GOOGLE_REDIRECT_URI=https://emailagent.duckdns.org/api/auth/callback" >> /opt/email-agent/Backend/.env.dev
+                echo "FRONTEND_URL=https://emailagent.duckdns.org" >> /opt/email-agent/Backend/.env.dev
+                echo "CORS_ORIGINS=http://localhost:3000,http://localhost:3001,https://emailagent.duckdns.org" >> /opt/email-agent/Backend/.env.dev
+              fi
+              sudo chown $VM_USER_VAL:$VM_USER_VAL /opt/email-agent/Backend/.env.dev
+            fi
+            
+            # Frontend .env.dev.local
+            if [ ! -f "/opt/email-agent/Frontend/.env.dev.local" ]; then
+              echo "Creating Frontend/.env.dev.local file from template..."
+              if [ -f "/opt/email-agent/Frontend/env.dev.template" ]; then
+                cp /opt/email-agent/Frontend/env.dev.template /opt/email-agent/Frontend/.env.dev.local
+              else
+                touch /opt/email-agent/Frontend/.env.dev.local
+                echo "NEXT_PUBLIC_API_URL=https://emailagent.duckdns.org/api" >> /opt/email-agent/Frontend/.env.dev.local
+                echo "NODE_ENV=development" >> /opt/email-agent/Frontend/.env.dev.local
+              fi
+              sudo chown $VM_USER_VAL:$VM_USER_VAL /opt/email-agent/Frontend/.env.dev.local
+            fi
+            
+            # Update .env.dev files with secrets if provided
+            if [ -n "$DEV_AZURE_OPENAI_ENDPOINT" ]; then
+              echo "Updating Backend/.env.dev with Azure OpenAI endpoint..."
+              grep -q "AZURE_OPENAI_ENDPOINT" /opt/email-agent/Backend/.env.dev && \
+                sed -i "s|AZURE_OPENAI_ENDPOINT=.*|AZURE_OPENAI_ENDPOINT=$DEV_AZURE_OPENAI_ENDPOINT|" /opt/email-agent/Backend/.env.dev || \
+                echo "AZURE_OPENAI_ENDPOINT=$DEV_AZURE_OPENAI_ENDPOINT" >> /opt/email-agent/Backend/.env.dev
+            fi
+            if [ -n "$DEV_AZURE_OPENAI_API_KEY" ]; then
+              echo "Updating Backend/.env.dev with Azure OpenAI API key..."
+              grep -q "AZURE_OPENAI_KEY" /opt/email-agent/Backend/.env.dev && \
+                sed -i "s|AZURE_OPENAI_KEY=.*|AZURE_OPENAI_KEY=$DEV_AZURE_OPENAI_API_KEY|" /opt/email-agent/Backend/.env.dev || \
+                echo "AZURE_OPENAI_KEY=$DEV_AZURE_OPENAI_API_KEY" >> /opt/email-agent/Backend/.env.dev
+            fi
+            if [ -n "$DEV_AZURE_OPENAI_DEPLOYMENT_NAME" ]; then
+              echo "Updating Backend/.env.dev with Azure OpenAI deployment name..."
+              grep -q "AZURE_OPENAI_DEPLOYMENT" /opt/email-agent/Backend/.env.dev && \
+                sed -i "s|AZURE_OPENAI_DEPLOYMENT=.*|AZURE_OPENAI_DEPLOYMENT=$DEV_AZURE_OPENAI_DEPLOYMENT_NAME|" /opt/email-agent/Backend/.env.dev || \
+                echo "AZURE_OPENAI_DEPLOYMENT=$DEV_AZURE_OPENAI_DEPLOYMENT_NAME" >> /opt/email-agent/Backend/.env.dev
+            fi
+            # Set Google OAuth credentials from GitHub secrets
+            if [ -n "$DEV_GOOGLE_CLIENT_ID" ]; then
+              echo "Setting Backend/.env.dev with Google Client ID from secrets..."
+              grep -q "GOOGLE_CLIENT_ID" /opt/email-agent/Backend/.env.dev && \
+                sed -i "s|GOOGLE_CLIENT_ID=.*|GOOGLE_CLIENT_ID=$DEV_GOOGLE_CLIENT_ID|" /opt/email-agent/Backend/.env.dev || \
+                echo "GOOGLE_CLIENT_ID=$DEV_GOOGLE_CLIENT_ID" >> /opt/email-agent/Backend/.env.dev
+            else
+              echo "⚠️  DEV_GOOGLE_CLIENT_ID secret not set. OAuth login will not work."
+            fi
+            if [ -n "$DEV_GOOGLE_CLIENT_SECRET" ]; then
+              echo "Setting Backend/.env.dev with Google Client Secret from secrets..."
+              grep -q "GOOGLE_CLIENT_SECRET" /opt/email-agent/Backend/.env.dev && \
+                sed -i "s|GOOGLE_CLIENT_SECRET=.*|GOOGLE_CLIENT_SECRET=$DEV_GOOGLE_CLIENT_SECRET|" /opt/email-agent/Backend/.env.dev || \
+                echo "GOOGLE_CLIENT_SECRET=$DEV_GOOGLE_CLIENT_SECRET" >> /opt/email-agent/Backend/.env.dev
+            else
+              echo "⚠️  DEV_GOOGLE_CLIENT_SECRET secret not set. OAuth login will not work."
+            fi
+            if [ -n "$DEV_SESSION_SECRET" ]; then
+              echo "Updating Backend/.env.dev with Session Secret..."
+              grep -q "SESSION_SECRET" /opt/email-agent/Backend/.env.dev && \
+                sed -i "s|SESSION_SECRET=.*|SESSION_SECRET=$DEV_SESSION_SECRET|" /opt/email-agent/Backend/.env.dev || \
+                echo "SESSION_SECRET=$DEV_SESSION_SECRET" >> /opt/email-agent/Backend/.env.dev
+            fi
+            
+            # Always ensure FRONTEND_URL and GOOGLE_REDIRECT_URI are set to production values
+            echo "Ensuring FRONTEND_URL is set to production URL..."
+            grep -q "FRONTEND_URL" /opt/email-agent/Backend/.env.dev && \
+              sed -i "s|FRONTEND_URL=.*|FRONTEND_URL=https://emailagent.duckdns.org|" /opt/email-agent/Backend/.env.dev || \
+              echo "FRONTEND_URL=https://emailagent.duckdns.org" >> /opt/email-agent/Backend/.env.dev
+            
+            echo "Ensuring GOOGLE_REDIRECT_URI is set to production URL..."
+            grep -q "GOOGLE_REDIRECT_URI" /opt/email-agent/Backend/.env.dev && \
+              sed -i "s|GOOGLE_REDIRECT_URI=.*|GOOGLE_REDIRECT_URI=https://emailagent.duckdns.org/api/auth/callback|" /opt/email-agent/Backend/.env.dev || \
+              echo "GOOGLE_REDIRECT_URI=https://emailagent.duckdns.org/api/auth/callback" >> /opt/email-agent/Backend/.env.dev
+            
+            # Ensure Frontend API URL is set correctly (without /api suffix - it's added by the API client)
+            echo "Ensuring NEXT_PUBLIC_API_URL is set to production URL..."
+            grep -q "NEXT_PUBLIC_API_URL" /opt/email-agent/Frontend/.env.dev.local && \
+              sed -i "s|NEXT_PUBLIC_API_URL=.*|NEXT_PUBLIC_API_URL=https://emailagent.duckdns.org|" /opt/email-agent/Frontend/.env.dev.local || \
+              echo "NEXT_PUBLIC_API_URL=https://emailagent.duckdns.org" >> /opt/email-agent/Frontend/.env.dev.local
+            
+            # Recreate frontend to pick up API URL change (Next.js needs rebuild for NEXT_PUBLIC_* vars)
+            echo "🔄 Recreating frontend container to load updated API URL..."
+            sudo docker-compose -f docker-compose.dev.yml up -d --force-recreate --no-deps frontend || true
+            echo "⏳ Waiting for frontend to start..."
+            sleep 10
+            echo "✅ Frontend recreated with updated API URL"
+            
+            # Also create fallback .env files if they don't exist
+            if [ ! -f "/opt/email-agent/Backend/.env" ]; then
+              echo "Creating Backend/.env file (fallback)..."
+              touch /opt/email-agent/Backend/.env
+              sudo chown $VM_USER_VAL:$VM_USER_VAL /opt/email-agent/Backend/.env
+            fi
+            if [ ! -f "/opt/email-agent/Frontend/.env.local" ]; then
+              echo "Creating Frontend/.env.local file (fallback)..."
+              touch /opt/email-agent/Frontend/.env.local
+              sudo chown $VM_USER_VAL:$VM_USER_VAL /opt/email-agent/Frontend/.env.local
+            fi
+            
+            # Ensure Docker and Docker Compose are installed
+            if ! command -v docker &> /dev/null; then
+              echo "📦 Installing Docker..."
+              curl -fsSL https://get.docker.com -o get-docker.sh
+              sudo sh get-docker.sh
+              sudo usermod -aG docker $VM_USER_VAL
+              rm get-docker.sh
+            fi
+            
+            if ! command -v docker-compose &> /dev/null; then
+              echo "📦 Installing Docker Compose..."
+              sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+              sudo chmod +x /usr/local/bin/docker-compose
+            fi
+            
+            # Stop existing containers
+            echo "🛑 Stopping existing containers..."
+            sudo docker-compose -f docker-compose.dev.yml down || true
+            
+            # Selective cleanup - only remove old/unused resources, keep cache
+            echo "🧹 Selective Docker cleanup (preserving cache)..."
+            echo "📊 Disk space before cleanup:"
+            df -h /
+            
+            # Only remove stopped containers and unused networks (keep images and cache)
+            sudo docker container prune -f || true
+            sudo docker network prune -f || true
+            
+            # Only remove dangling images (not all images)
+            sudo docker image prune -f || true
+            
+            # Only remove build cache older than 7 days (keep recent cache)
+            sudo docker builder prune -f --filter "until=168h" || true
+            
+            echo "📊 Disk space after cleanup:"
+            df -h /
+            
+            # Clear Next.js cache if it exists (will be rebuilt during Docker build)
+            echo "🧹 Clearing Next.js cache..."
+            sudo rm -rf /opt/email-agent/Frontend/.next || true
+            
+            # Enable BuildKit for faster builds with better caching
+            export DOCKER_BUILDKIT=1
+            export COMPOSE_DOCKER_CLI_BUILD=1
+            
+            # Set NEXT_PUBLIC_API_URL for frontend build (required at build time for Next.js)
+            export NEXT_PUBLIC_API_URL=https://emailagent.duckdns.org
+            echo "📦 Setting NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL for frontend build"
+            
+            # Build new images WITH cache (much faster!)
+            echo "🔨 Building Docker images (with cache)..."
+            if sudo docker-compose -f docker-compose.dev.yml build; then
+              echo "✅ Docker images built successfully"
+            else
+              echo "❌ Docker build failed!"
+              echo "   Checking build logs..."
+              sudo docker-compose -f docker-compose.dev.yml build --no-cache frontend 2>&1 | tail -50 || true
+              exit 1
+            fi
+            
+            # Verify frontend image was created
+            echo ""
+            echo "🔍 Verifying frontend image..."
+            if sudo docker images | grep -q "email-agent-frontend"; then
+              echo "✅ Frontend image exists"
+              sudo docker images | grep "email-agent-frontend" | head -1
+            else
+              echo "❌ Frontend image not found!"
+              exit 1
+            fi
+            
+            # Start containers
+            echo ""
+            echo "🚀 Starting containers..."
+            sudo docker-compose -f docker-compose.dev.yml up -d
+            
+            # Wait for services to be ready (production build is done during Docker build)
+            echo "⏳ Waiting for services to start..."
+            sleep 15
+            
+            # Recreate backend to pick up OAuth credentials if they were set
+            # Note: docker-compose restart doesn't reload env_file, so we need to recreate
+            if [ -n "$DEV_GOOGLE_CLIENT_ID" ] && [ -n "$DEV_GOOGLE_CLIENT_SECRET" ]; then
+              echo "🔄 Recreating backend container to load OAuth credentials..."
+              sudo docker-compose -f docker-compose.dev.yml up -d --force-recreate --no-deps backend || true
+              echo "⏳ Waiting for backend to start..."
+              sleep 10
+              echo "✅ Backend recreated with OAuth credentials"
+            fi
+            
+            # Check container status
+            echo "📊 Container status:"
+            sudo docker-compose -f docker-compose.dev.yml ps
+            
+            # Detailed frontend container check
+            echo ""
+            echo "🔍 Detailed Frontend Container Check:"
+            FRONTEND_STATUS=$(sudo docker-compose -f docker-compose.dev.yml ps frontend 2>/dev/null | grep -c "Up" || echo "0")
+            if [ "$FRONTEND_STATUS" -eq 0 ]; then
+              echo "❌ Frontend container is NOT running!"
+              echo "   Attempting to restart frontend container..."
+              sudo docker-compose -f docker-compose.dev.yml restart frontend
+              sleep 10
+              echo "   Frontend container status after restart:"
+              sudo docker-compose -f docker-compose.dev.yml ps frontend
+            else
+              echo "✅ Frontend container is running"
+            fi
+            
+            # Check if .next directory exists in frontend container
+            echo ""
+            echo "🔍 Checking if production build exists in frontend container:"
+            sudo docker exec email-agent-frontend-dev ls -la /app/.next 2>/dev/null | head -5 || echo "❌ .next directory not found - build may have failed"
+            
+            # Show frontend container logs
+            echo ""
+            echo "📋 Frontend container logs (last 30 lines):"
+            sudo docker-compose -f docker-compose.dev.yml logs --tail=30 frontend 2>/dev/null || true
+            
+            # Check and configure firewall
+            echo "🔥 Checking firewall configuration..."
+            if command -v ufw &> /dev/null; then
+              echo "Opening ports 3000 and 8000 in UFW..."
+              sudo ufw allow 3000/tcp 2>/dev/null || true
+              sudo ufw allow 8000/tcp 2>/dev/null || true
+              sudo ufw reload 2>/dev/null || true
+              echo "UFW status:"
+              sudo ufw status 2>/dev/null || true
+            else
+              echo "UFW not installed, checking iptables..."
+              sudo iptables -L -n 2>/dev/null | grep -E '(3000|8000)' || echo "Check cloud firewall rules"
+            fi
+            
+            # Check if ports are listening
+            echo ""
+            echo "🔍 Checking if ports are listening..."
+            if command -v ss &> /dev/null; then
+              PORT_3000=$(sudo ss -tlnp 2>/dev/null | grep ':3000' || echo "")
+              PORT_8000=$(sudo ss -tlnp 2>/dev/null | grep ':8000' || echo "")
+              if [ -n "$PORT_3000" ]; then
+                echo "✅ Port 3000 is listening: $PORT_3000"
+              else
+                echo "❌ Port 3000 is NOT listening"
+                echo "   Checking frontend container logs..."
+                sudo docker-compose -f docker-compose.dev.yml logs --tail=20 frontend 2>/dev/null || true
+              fi
+              if [ -n "$PORT_8000" ]; then
+                echo "✅ Port 8000 is listening: $PORT_8000"
+              else
+                echo "❌ Port 8000 is NOT listening"
+                echo "   Checking backend container logs..."
+                sudo docker-compose -f docker-compose.dev.yml logs --tail=20 backend 2>/dev/null || true
+              fi
+            elif command -v netstat &> /dev/null; then
+              PORT_3000=$(sudo netstat -tlnp 2>/dev/null | grep ':3000' || echo "")
+              PORT_8000=$(sudo netstat -tlnp 2>/dev/null | grep ':8000' || echo "")
+              if [ -n "$PORT_3000" ]; then
+                echo "✅ Port 3000 is listening: $PORT_3000"
+              else
+                echo "❌ Port 3000 is NOT listening"
+                echo "   Checking frontend container logs..."
+                sudo docker-compose -f docker-compose.dev.yml logs --tail=20 frontend 2>/dev/null || true
+              fi
+              if [ -n "$PORT_8000" ]; then
+                echo "✅ Port 8000 is listening: $PORT_8000"
+              else
+                echo "❌ Port 8000 is NOT listening"
+                echo "   Checking backend container logs..."
+                sudo docker-compose -f docker-compose.dev.yml logs --tail=20 backend 2>/dev/null || true
+              fi
+            fi
+            
+            # Check cloud firewall / security groups
+            echo ""
+            echo "🔥 IMPORTANT: Check Cloud Provider Firewall Rules"
+            echo "================================================"
+            echo "The VM is not accessible from the internet. This is likely a firewall issue."
+            echo ""
+            echo "For Azure VM:"
+            echo "  1. Go to Azure Portal → Virtual Machines → Your VM"
+            echo "  2. Click 'Networking' in the left menu"
+            echo "  3. Click 'Add inbound port rule'"
+            echo "  4. Add rules for:"
+            echo "     - Port 3000 (HTTP) - Allow from Any source"
+            echo "     - Port 8000 (HTTP) - Allow from Any source"
+            echo "     - Port 22 (SSH) - Allow from Any source (if needed)"
+            echo ""
+            echo "For AWS EC2:"
+            echo "  1. Go to EC2 → Security Groups → Select your instance's security group"
+            echo "  2. Click 'Edit inbound rules'"
+            echo "  3. Add rules for:"
+            echo "     - Port 3000 (Custom TCP) - Source: 0.0.0.0/0"
+            echo "     - Port 8000 (Custom TCP) - Source: 0.0.0.0/0"
+            echo "     - Port 22 (SSH) - Source: 0.0.0.0/0 (if needed)"
+            echo ""
+            echo "For GCP:"
+            echo "  1. Go to VPC Network → Firewall rules"
+            echo "  2. Create rules allowing:"
+            echo "     - Port 3000 (tcp:3000) - Source: 0.0.0.0/0"
+            echo "     - Port 8000 (tcp:8000) - Source: 0.0.0.0/0"
+            echo "     - Port 22 (tcp:22) - Source: 0.0.0.0/0 (if needed)"
+            echo ""
+            echo "Current VM IP: $VM_PUBLIC_IP"
+            echo "Services should be accessible at:"
+            echo "  - Frontend: http://$VM_PUBLIC_IP:3000"
+            echo "  - Backend: http://$VM_PUBLIC_IP:8000"
+            echo ""
+            
+            # Test local connections
+            echo ""
+            echo "🧪 Testing local connections..."
+            echo "Testing http://localhost:3000..."
+            curl -I http://localhost:3000 --max-time 5 2>&1 | head -3 || echo "❌ Frontend not responding locally"
+            echo ""
+            echo "Testing http://localhost:8000/api/health..."
+            curl -I http://localhost:8000/api/health --max-time 5 2>&1 | head -3 || echo "❌ Backend not responding locally"
+            
+            # Show frontend logs if there are issues
+            echo ""
+            echo "📋 Frontend container logs (last 20 lines):"
+            sudo docker-compose -f docker-compose.dev.yml logs --tail=20 frontend 2>/dev/null || true
+            
+            # Auto-fix: Restart containers if they're not running properly
+            echo ""
+            echo "🔧 Auto-fixing container issues..."
+            FRONTEND_UP=$(sudo docker-compose -f docker-compose.dev.yml ps frontend 2>/dev/null | grep -c "Up" || echo "0")
+            BACKEND_UP=$(sudo docker-compose -f docker-compose.dev.yml ps backend 2>/dev/null | grep -c "Up" || echo "0")
+            
+            if [ "$FRONTEND_UP" -eq 0 ] || [ "$BACKEND_UP" -eq 0 ]; then
+              echo "⚠️  Some containers are not running, restarting all..."
+              sudo docker-compose -f docker-compose.dev.yml restart
+              sleep 10
+              echo "Container status after restart:"
+              sudo docker-compose -f docker-compose.dev.yml ps
+            fi
+            
+            # Ensure firewall ports are open
+            echo ""
+            echo "🔥 Ensuring firewall ports are open..."
+            if command -v ufw &> /dev/null; then
+              sudo ufw allow 3000/tcp 2>/dev/null || true
+              sudo ufw allow 8000/tcp 2>/dev/null || true
+              sudo ufw reload 2>/dev/null || true
+              echo "✅ Firewall configured"
+            fi
+            
+            # Final connectivity test with retries (production server should start quickly)
+            echo ""
+            echo "🧪 Final connectivity test (with retries for Next.js production server)..."
+            FRONTEND_READY=0
+            for i in {1..10}; do
+              echo "  Attempt $i/10..."
+              if curl -f -s --max-time 5 http://localhost:3000 > /dev/null 2>&1; then
+                echo "✅ Frontend is responding on localhost:3000"
+                FRONTEND_READY=1
+                break
+              fi
+              if [ $i -lt 10 ]; then
+                echo "  Waiting 5 seconds for Next.js to start..."
+                sleep 5
+              fi
+            done
+            
+            if [ "$FRONTEND_READY" -eq 0 ]; then
+              echo "❌ Frontend is NOT responding on localhost:3000 after 50 seconds"
+              echo ""
+              echo "=== Frontend container status ==="
+              sudo docker-compose -f docker-compose.dev.yml ps frontend 2>/dev/null || true
+              echo ""
+              echo "=== Frontend container health check ==="
+              sudo docker inspect email-agent-frontend-dev --format='{{.State.Status}} - {{.State.Health.Status}}' 2>/dev/null || echo "Could not inspect container"
+              echo ""
+              echo "=== Frontend logs (last 100 lines) ==="
+              sudo docker-compose -f docker-compose.dev.yml logs --tail=100 frontend 2>/dev/null || true
+              echo ""
+              echo "=== Checking if .next build exists ==="
+              sudo docker exec email-agent-frontend-dev ls -la /app/.next 2>/dev/null | head -10 || echo "❌ .next directory not accessible"
+              echo ""
+              echo "=== Checking if Next.js process is running ==="
+              sudo docker exec email-agent-frontend-dev ps aux | grep -E "node|next" || echo "No Node.js processes found"
+              echo ""
+              echo "=== Checking container environment ==="
+              sudo docker exec email-agent-frontend-dev env | grep -E "NODE_ENV|NEXT_PUBLIC" || echo "Could not get environment"
+              echo ""
+              echo "=== Attempting to restart frontend container ==="
+              sudo docker-compose -f docker-compose.dev.yml restart frontend
+              sleep 15
+              echo "=== Testing again after restart ==="
+              curl -f -s --max-time 5 http://localhost:3000 > /dev/null 2>&1 && echo "✅ Frontend is now responding!" || echo "❌ Frontend still not responding"
+            fi
+            
+            if curl -f -s --max-time 5 http://localhost:8000/api/health > /dev/null 2>&1; then
+              echo "✅ Backend is responding on localhost:8000"
+            else
+              echo "❌ Backend is NOT responding on localhost:8000"
+              echo "Backend logs:"
+              sudo docker-compose -f docker-compose.dev.yml logs --tail=30 backend 2>/dev/null || true
+            fi
+            
+            # Clean up old images
+            echo ""
+            echo "🧹 Cleaning up old images..."
+            sudo docker image prune -f
+            
+            echo ""
+            echo "================================================"
+            echo "✅ Deployment completed successfully!"
+            echo "================================================"
+            echo ""
+            echo "⚠️  IMPORTANT: If you cannot access the site from the internet,"
+            echo "   check your cloud provider's firewall/security group rules."
+            echo ""
+            echo "   The services are running, but may be blocked by:"
+            echo "   - Azure: Network Security Group (NSG) rules"
+            echo "   - AWS: Security Group inbound rules"
+            echo "   - GCP: VPC Firewall rules"
+            echo ""
+            echo "   Ensure ports 3000 and 8000 are open for inbound traffic."
+            echo ""
+          DEPLOY_SCRIPT
+      
+      - name: Health Check
+        env:
+          VM_USER: ${{ secrets.VM_USER }}
+          VM_PASSWORD: ${{ secrets.VM_PASSWORD }}
+          VM_HOST: ${{ secrets.VM_HOST }}
+        run: |
+          echo "🏥 Performing health check..."
+          
+          # Wait a bit longer initially
+          sleep 20
+          
+          # Retry up to 5 times
+          for i in {1..5}; do
+            echo "Health check attempt $i/5..."
+            if curl -f -s --max-time 10 http://$VM_HOST:8000/api/health; then
+              echo "✅ Health check passed!"
+              exit 0
+            fi
+            if [ $i -lt 5 ]; then
+              echo "⏳ Waiting 10 seconds before retry..."
+              sleep 10
+            fi
+          done
+          
+          echo "❌ Health check failed! Getting diagnostic information..."
+          sshpass -p "$VM_PASSWORD" ssh -o StrictHostKeyChecking=no $VM_USER@$VM_HOST << 'DIAG_SCRIPT'
+            echo "=== Container Status ==="
+            sudo docker-compose -f /opt/email-agent/docker-compose.dev.yml ps || true
+            
+            echo ""
+            echo "=== Container Logs (Backend) ==="
+            sudo docker-compose -f /opt/email-agent/docker-compose.dev.yml logs --tail=50 backend || true
+            
+            echo ""
+            echo "=== Container Logs (Frontend) ==="
+            sudo docker-compose -f /opt/email-agent/docker-compose.dev.yml logs --tail=50 frontend || true
+            
+            echo ""
+            echo "=== Port Status ==="
+            sudo netstat -tlnp 2>/dev/null | grep -E ':(8000|3000)' || sudo ss -tlnp 2>/dev/null | grep -E ':(8000|3000)' || echo "Port check command not available"
+          DIAG_SCRIPT
+          
+          exit 1
+

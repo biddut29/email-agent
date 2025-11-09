@@ -1,0 +1,86 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./Backend
+      dockerfile: Dockerfile.dev
+    container_name: email-agent-backend-dev
+    restart: unless-stopped
+    # Add memory limits
+    mem_limit: 4g
+    memswap_limit: 4g
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./Backend:/app
+      - ./Backend/chroma_db:/app/chroma_db
+      - backend_venv:/app/venv  # Preserve venv between restarts
+    environment:
+      - MONGODB_URI=mongodb://mongodb:27017/email_agent
+      - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT}
+      - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY}
+      - AZURE_OPENAI_DEPLOYMENT_NAME=${AZURE_OPENAI_DEPLOYMENT_NAME}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - GOOGLE_REDIRECT_URI=${GOOGLE_REDIRECT_URI}
+      - SESSION_SECRET=${SESSION_SECRET}
+      - FRONTEND_URL=${FRONTEND_URL}
+    env_file:
+      - ./Backend/.env.dev
+      - ./Backend/.env  # Fallback to .env if .env.dev doesn't exist
+    depends_on:
+      - mongodb
+    networks:
+      - email-agent-network
+    command: uvicorn api_server:app --host 0.0.0.0 --port 8000 --reload
+
+  frontend:
+    build:
+      context: ./Frontend
+      dockerfile: Dockerfile.dev
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://emailagent.duckdns.org}
+    container_name: email-agent-frontend-dev
+    restart: unless-stopped
+    # Add memory limits
+    mem_limit: 2g
+    memswap_limit: 2g
+    ports:
+      - "3000:3000"
+    # No volume mounts for production - use the built image directly
+    # The production build is already in the image from the Dockerfile
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+      - HOSTNAME=0.0.0.0
+      - PORT=3000
+    env_file:
+      - ./Frontend/.env.dev.local
+      - ./Frontend/.env.local  # Fallback to .env.local if .env.dev.local doesn't exist
+    depends_on:
+      - backend
+    networks:
+      - email-agent-network
+
+  mongodb:
+    image: mongo:7
+    container_name: email-agent-mongodb-dev
+    restart: unless-stopped
+    mem_limit: 1g
+    memswap_limit: 1g
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - email-agent-network
+
+networks:
+  email-agent-network:
+    driver: bridge
+
+volumes:
+  mongodb_data:
+  backend_venv:
+

@@ -437,32 +437,45 @@ Best regards,
             sender_email = config.EMAIL_ADDRESS if hasattr(config, 'EMAIL_ADDRESS') else 'bidduttest@gmail.com'
             sender_name = sender_email.split('@')[0].replace('.', ' ').title()
             
-            prompt = f"""You are an intelligent email assistant. Your task is to analyze the email below and generate a thoughtful, contextual response.
-
-ANALYSIS PROCESS:
-1. First, carefully read and understand the SUBJECT line - what is the main topic?
-2. Then, analyze the BODY content - what is the sender actually saying, asking, or requesting?
-3. Identify the intent: Is it a question? A request? Information sharing? A greeting? A complaint?
-4. Consider the context and tone of the original message
-5. Generate an appropriate response that directly addresses what they said
+            prompt = f"""You are an intelligent email assistant. Analyze the email below and generate a thoughtful, contextual response.
 
 EMAIL TO ANALYZE:
 From: {from_name} ({from_email})
 Subject: {subject}
 Body: {body}
 
-CRITICAL REQUIREMENTS:
-- DO NOT use generic phrases like "Thank you for your email regarding [subject]"
-- DO NOT give a static/template response
-- DO analyze what they're actually saying and respond to THAT
-- DO be specific and address their actual message content
-- DO match the tone - if they're casual, be friendly; if formal, be professional
-- DO answer questions if asked, acknowledge requests, respond to greetings naturally
-- Keep it concise (3-5 sentences) but meaningful and contextual
-- Sign as "{sender_name}" from {sender_email}
-- Do NOT include subject line or placeholders
+ANALYSIS INSTRUCTIONS:
+1. Read the entire email carefully - understand the sender's intent, questions, requests, or information shared
+2. Identify the key points: What are they asking? What do they need? What information are they sharing?
+3. Determine the appropriate tone: Match their communication style (formal/professional vs casual/friendly)
+4. Consider context: Is this a follow-up? A new conversation? A response to something?
 
-Think about what they're really saying, then write a natural, helpful response:
+RESPONSE REQUIREMENTS:
+- Be SPECIFIC and address their actual message content - don't use generic phrases
+- Answer any questions they asked directly
+- Acknowledge any requests or information they shared
+- Match their tone (if casual, be friendly; if formal, be professional)
+- Keep it concise (2-4 sentences) but meaningful
+- Be natural and conversational - avoid robotic or template-like language
+- If they're greeting you, respond naturally to the greeting
+- If they're asking something, provide a helpful answer
+- If they're sharing information, acknowledge it appropriately
+
+CRITICAL: DO NOT use generic phrases like:
+- "Thank you for your email regarding [subject]"
+- "I received your message"
+- "Thank you for reaching out"
+- Any template-like responses
+
+INSTEAD: Respond directly to what they said. For example:
+- If they ask "How are you?" → Respond naturally to the question
+- If they ask "Can you help with X?" → Address their specific request
+- If they share news → Acknowledge it appropriately
+- If they greet you → Respond to the greeting naturally
+
+Sign as "{sender_name}" from {sender_email}
+
+Now, write a natural, helpful response that directly addresses their message:
 
 Response:"""
             
