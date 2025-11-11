@@ -323,6 +323,27 @@ jobs:
             # Start containers
             echo ""
             echo "🚀 Starting containers..."
+            # Start MongoDB first
+            echo "📦 Starting MongoDB..."
+            sudo docker-compose -f docker-compose.dev.yml up -d mongodb
+            
+            # Wait for MongoDB to be ready
+            echo "⏳ Waiting for MongoDB to be ready..."
+            for i in {1..30}; do
+              if sudo docker exec email-agent-mongodb-dev mongosh --eval "db.adminCommand('ping')" --quiet 2>/dev/null | grep -q "ok.*1"; then
+                echo "✅ MongoDB is ready"
+                break
+              fi
+              if [ $i -eq 30 ]; then
+                echo "⚠️  MongoDB health check timeout, but continuing..."
+              else
+                echo "  Waiting for MongoDB... ($i/30)"
+                sleep 2
+              fi
+            done
+            
+            # Start all other containers
+            echo "📦 Starting backend and frontend..."
             sudo docker-compose -f docker-compose.dev.yml up -d
             
             # Wait for services to be ready (production build is done during Docker build)
@@ -352,6 +373,26 @@ jobs:
             echo ""
             echo "Checking backend container environment:"
             sudo docker exec email-agent-backend-dev env 2>/dev/null | grep -E "AZURE_OPENAI_KEY|GOOGLE_CLIENT_ID|MONGODB_URI" | head -3 | sed 's/=.*/=***/' || echo "⚠️  Cannot check container environment"
+            
+            echo ""
+            echo "🔍 Verifying MongoDB connectivity:"
+            echo "MongoDB container status:"
+            sudo docker-compose -f docker-compose.dev.yml ps mongodb 2>/dev/null || echo "⚠️  Cannot check MongoDB container"
+            
+            echo ""
+            echo "Testing MongoDB connection from backend container:"
+            sudo docker exec email-agent-backend-dev python -c "
+import os
+from pymongo import MongoClient
+try:
+    uri = os.getenv('MONGODB_URI', 'mongodb://mongodb:27017/email_agent')
+    print(f'  Connecting to: {uri.split(\"@\")[-1] if \"@\" in uri else uri}')
+    client = MongoClient(uri, serverSelectionTimeoutMS=3000)
+    client.admin.command('ping')
+    print('  ✅ MongoDB connection successful')
+except Exception as e:
+    print(f'  ❌ MongoDB connection failed: {e}')
+" 2>/dev/null || echo "⚠️  Cannot test MongoDB connection"
             
             # Check container status
             echo "📊 Container status:"

@@ -30,7 +30,8 @@ services:
       - ./Backend/.env  # Load .env first (primary config)
       - ./Backend/.env.dev  # Then override with .env.dev if it exists
     depends_on:
-      - mongodb
+      mongodb:
+        condition: service_healthy
     networks:
       - email-agent-network
     command: uvicorn api_server:app --host 0.0.0.0 --port 8000 --reload
@@ -75,6 +76,12 @@ services:
       - mongodb_data:/data/db
     networks:
       - email-agent-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
 
 networks:
   email-agent-network:
