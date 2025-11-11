@@ -52,7 +52,8 @@ export default function NotificationListener() {
 
   useEffect(() => {
     // Connect to SSE endpoint
-    const es = new EventSource('http://localhost:8000/api/notifications/stream');
+    const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+    const es = new EventSource(`${API_BASE_URL}/api/notifications/stream`);
 
     es.onopen = () => {
       console.log('✓ Connected to notification stream');

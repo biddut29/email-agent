@@ -107,7 +107,7 @@ jobs:
                 cp /opt/email-agent/Frontend/env.dev.template /opt/email-agent/Frontend/.env.dev.local
               else
                 touch /opt/email-agent/Frontend/.env.dev.local
-                echo "NEXT_PUBLIC_API_URL=https://emailagent.duckdns.org/api" >> /opt/email-agent/Frontend/.env.dev.local
+                echo "NEXT_PUBLIC_API_URL=https://emailagent.duckdns.org" >> /opt/email-agent/Frontend/.env.dev.local
                 echo "NODE_ENV=development" >> /opt/email-agent/Frontend/.env.dev.local
               fi
               sudo chown $VM_USER_VAL:$VM_USER_VAL /opt/email-agent/Frontend/.env.dev.local

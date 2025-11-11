@@ -46,7 +46,7 @@ export default function VectorViewer() {
   const [currentPage, setCurrentPage] = useState(1);
   const [resultsPerPage] = useState(10);
 
-  const API_BASE = 'http://localhost:8000';
+  const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
   // Load stats on mount
   useEffect(() => {
