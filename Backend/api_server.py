@@ -215,10 +215,9 @@ async def startup_event():
             skip_count=True  # Skip expensive count on startup
         )
     
-    # Read auto-reply enabled and AI provider from database (not from module-level variables set at import time)
-    auto_reply_enabled_str = config.get_config_value("auto_reply_enabled", "AUTO_REPLY_ENABLED", "true")
-    auto_reply_enabled = auto_reply_enabled_str.lower() == "true" if isinstance(auto_reply_enabled_str, str) else bool(auto_reply_enabled_str)
-    ai_provider = config.get_config_value("ai_provider", "AI_PROVIDER", "azure")
+    # Read auto-reply enabled and AI provider from .env files
+    auto_reply_enabled = config.AUTO_REPLY_ENABLED
+    ai_provider = config.AI_PROVIDER
     
     email_agent = EmailAgent(
         ai_enabled=True, 

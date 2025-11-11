@@ -17,15 +17,15 @@ class ChatAgent:
         self.conversation_history = []
         self.email_context = []
         
-        # Initialize Azure OpenAI - Read from database directly
+        # Initialize Azure OpenAI - Read from .env files
         if config.USE_AZURE_OPENAI:
             try:
                 from openai import AzureOpenAI
-                # Read from database directly (not from module-level variables which are set at import time)
-                azure_key = config.get_config_value("azure_openai_key", "AZURE_OPENAI_KEY", "")
-                azure_endpoint = config.get_config_value("azure_openai_endpoint", "AZURE_OPENAI_ENDPOINT", "")
-                azure_deployment = config.get_config_value("azure_openai_deployment", "AZURE_OPENAI_DEPLOYMENT", "gpt-4.1-mini")
-                azure_api_version = config.get_config_value("azure_openai_api_version", "AZURE_OPENAI_API_VERSION", "2024-12-01-preview")
+                # Read from .env files
+                azure_key = config.AZURE_OPENAI_KEY
+                azure_endpoint = config.AZURE_OPENAI_ENDPOINT
+                azure_deployment = config.AZURE_OPENAI_DEPLOYMENT
+                azure_api_version = config.AZURE_OPENAI_API_VERSION
                 
                 if not azure_key or not azure_endpoint:
                     print("⚠ Chat Agent: Azure OpenAI credentials not configured. Please configure in admin panel.")

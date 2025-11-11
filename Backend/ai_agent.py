@@ -24,17 +24,17 @@ class AIAgent:
         self.azure_deployment = None
         
         # Initialize Azure OpenAI client
-        # Read provider from database directly (not from module-level variables which are set at import time)
-        db_provider = config.get_config_value("ai_provider", "AI_PROVIDER", "azure")
+        # Read provider from .env files
+        db_provider = config.AI_PROVIDER
         if db_provider.lower() == "azure" and self.provider == "azure":
             try:
                 from openai import AzureOpenAI
                 
-                # Read from database directly (not from module-level variables which are set at import time)
-                azure_key = config.get_config_value("azure_openai_key", "AZURE_OPENAI_KEY", "")
-                azure_endpoint = config.get_config_value("azure_openai_endpoint", "AZURE_OPENAI_ENDPOINT", "")
-                azure_deployment = config.get_config_value("azure_openai_deployment", "AZURE_OPENAI_DEPLOYMENT", "gpt-4.1-mini")
-                azure_api_version = config.get_config_value("azure_openai_api_version", "AZURE_OPENAI_API_VERSION", "2024-12-01-preview")
+                # Read from .env files
+                azure_key = config.AZURE_OPENAI_KEY
+                azure_endpoint = config.AZURE_OPENAI_ENDPOINT
+                azure_deployment = config.AZURE_OPENAI_DEPLOYMENT
+                azure_api_version = config.AZURE_OPENAI_API_VERSION
                 
                 # Check if Azure OpenAI credentials are configured
                 if not azure_key or not azure_endpoint:
@@ -509,7 +509,7 @@ Response:"""
             if self.provider == "azure":
                 # Re-read deployment from config in case it changed
                 if not self.azure_deployment:
-                    self.azure_deployment = config.get_config_value("azure_openai_deployment", "AZURE_OPENAI_DEPLOYMENT", "gpt-4.1-mini")
+                    self.azure_deployment = config.AZURE_OPENAI_DEPLOYMENT
                 
                 response = self.client.chat.completions.create(
                     model=self.azure_deployment,
