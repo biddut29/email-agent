@@ -47,7 +47,8 @@ class EmailSender:
                    attachments: Optional[List[str]] = None,
                    html: bool = False,
                    in_reply_to: Optional[str] = None,
-                   references: Optional[str] = None) -> bool:
+                   references: Optional[str] = None,
+                   thread_id: Optional[str] = None) -> bool:
         """
         Send an email via Gmail API (if OAuth) or SMTP
         
@@ -61,13 +62,14 @@ class EmailSender:
             html: If True, body is treated as HTML
             in_reply_to: Message-ID of the email being replied to (for threading)
             references: Message-ID for References header (for threading)
+            thread_id: Gmail thread ID (for Gmail API threading)
         
         Returns:
             True if sent successfully, False otherwise
         """
         # Try Gmail API first if OAuth credentials are available
         if self.oauth_credentials and self.gmail_service:
-            return self._send_via_gmail_api(to, subject, body, cc, bcc, attachments, html, in_reply_to, references)
+            return self._send_via_gmail_api(to, subject, body, cc, bcc, attachments, html, in_reply_to, references, thread_id)
         
         # Fall back to SMTP
         return self._send_via_smtp(to, subject, body, cc, bcc, attachments, html, in_reply_to, references)
@@ -81,7 +83,8 @@ class EmailSender:
                            attachments: Optional[List[str]] = None,
                            html: bool = False,
                            in_reply_to: Optional[str] = None,
-                           references: Optional[str] = None) -> bool:
+                           references: Optional[str] = None,
+                           thread_id: Optional[str] = None) -> bool:
         """Send email via Gmail API"""
         try:
             # Create message
@@ -121,14 +124,20 @@ class EmailSender:
             # Encode message
             raw_message = base64.urlsafe_b64encode(msg.as_bytes()).decode('utf-8')
             
-            # Send via Gmail API
+            # Send via Gmail API with threadId for proper threading
             message = {'raw': raw_message}
+            if thread_id:
+                message['threadId'] = thread_id
+                print(f"📎 Using Gmail threadId: {thread_id} for proper threading")
+            
             sent_message = self.gmail_service.users().messages().send(
                 userId='me',
                 body=message
             ).execute()
             
             print(f"✓ Email sent successfully via Gmail API to {', '.join(to)}")
+            if thread_id:
+                print(f"   Threaded in Gmail thread: {thread_id}")
             return True
             
         except HttpError as e:

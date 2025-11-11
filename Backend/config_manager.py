@@ -76,13 +76,14 @@ class ConfigManager:
             return False
     
     def collection_exists(self) -> bool:
-        """Check if config collection exists in database"""
+        """Check if config collection exists in database (fast check)"""
         if self.config_collection is None:
             return False
         try:
-            # Check if collection exists by trying to list collections
-            collections = self.config_collection.database.list_collection_names()
-            return 'app_config' in collections
+            # Fast check: try to get one document (much faster than listing all collections)
+            # If collection doesn't exist, this will raise an exception
+            self.config_collection.find_one({}, limit=1)
+            return True
         except:
             return False
     
@@ -120,8 +121,14 @@ class ConfigManager:
             }
             
             # Only save if database is empty (first time initialization) or force_overwrite is True
-            existing_count = self.config_collection.count_documents({})
-            if existing_count == 0 or force_overwrite:
+            # Use fast check: try to find one document instead of counting all
+            try:
+                # Fast check: try to find one document instead of counting all
+                has_documents = self.config_collection.find_one({}, limit=1) is not None
+            except:
+                has_documents = False
+            
+            if not has_documents or force_overwrite:
                 # First time or forced overwrite - save all .env values
                 for key, value in env_config.items():
                     self.config_collection.update_one(

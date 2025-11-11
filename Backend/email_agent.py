@@ -58,11 +58,24 @@ class EmailAgent:
         print("EMAIL AGENT - Starting...")
         print("="*80)
         
-        # Initial connection test
-        if not self.receiver.connect():
-            print("⚠ Initial connection failed, but agent will retry on requests")
+        # Skip initial connection if no password (OAuth accounts connect on-demand)
+        # This speeds up startup significantly
+        if not self.receiver.password or not self.receiver.password.strip():
+            print("⚠ Skipping initial IMAP connection (OAuth account or no password configured)")
+            print("   Connection will be established on-demand when needed")
         else:
-            print(f"✓ Initial connection successful to {config.EMAIL_ADDRESS}")
+            # Quick connection test with shorter timeout
+            try:
+                import socket
+                original_timeout = socket.getdefaulttimeout()
+                socket.setdefaulttimeout(3)  # Reduced from 10 to 3 seconds
+                if not self.receiver.connect():
+                    print("⚠ Initial connection failed, but agent will retry on requests")
+                else:
+                    print(f"✓ Initial connection successful to {config.EMAIL_ADDRESS}")
+                socket.setdefaulttimeout(original_timeout)
+            except Exception as e:
+                print(f"⚠ Initial connection skipped: {e}")
         
         print(f"Monitoring: {config.EMAIL_ADDRESS}")
         print(f"AI Features: {'Enabled' if self.ai_enabled else 'Disabled'}")
@@ -225,9 +238,11 @@ class EmailAgent:
                                 # Get new emails using Gmail API
                                 if gmail_client.history_id:
                                     new_emails = gmail_client.get_new_emails(limit=10)
+                                    print(f"🔍 Gmail API (history): Found {len(new_emails) if new_emails else 0} emails for {account_email}")
                                 else:
                                     # Fallback: get recent emails if history_id not available
                                     new_emails = gmail_client.get_emails(limit=10, query='in:inbox is:unread')
+                                    print(f"🔍 Gmail API (fallback): Found {len(new_emails) if new_emails else 0} emails for {account_email}")
                                 
                                 # Filter to only new emails (check against MongoDB)
                                 if new_emails and self.mongodb_manager:
@@ -814,7 +829,35 @@ class EmailAgent:
             # 6. Check MongoDB - Have we already replied to this email?
             if self.mongodb_manager and self.mongodb_manager.replies_collection is not None:
                 if message_id and account_id:
+                    # Check for existing reply using both message_id formats (actual and synthetic)
                     existing_reply = self.mongodb_manager.get_reply(message_id, account_id)
+                    
+                    # Also check with alternate message_id format if not found
+                    if not existing_reply:
+                        # Try to find the email document to get alternate message_id format
+                        try:
+                            if self.mongodb_manager and self.mongodb_manager.emails_collection is not None:
+                                email_doc = self.mongodb_manager.emails_collection.find_one({
+                                    "$or": [
+                                        {"message_id": message_id, "account_id": account_id},
+                                        {"gmail_synthetic_id": message_id, "account_id": account_id}
+                                    ]
+                                }, {'gmail_synthetic_id': 1, 'message_id': 1})
+                                
+                                if email_doc:
+                                    # Try both message_id formats
+                                    synthetic_id = email_doc.get('gmail_synthetic_id')
+                                    actual_id = email_doc.get('message_id')
+                                    
+                                    # Check with actual Message-ID if current message_id is synthetic
+                                    if synthetic_id and message_id == synthetic_id and actual_id:
+                                        existing_reply = self.mongodb_manager.get_reply(actual_id, account_id)
+                                    # Check with synthetic ID if current message_id is actual
+                                    elif actual_id and message_id == actual_id and synthetic_id:
+                                        existing_reply = self.mongodb_manager.get_reply(synthetic_id, account_id)
+                        except Exception as e:
+                            print(f"⚠️  Error checking alternate message_id format: {e}")
+                    
                     if existing_reply:
                         sent_at = existing_reply.get('sent_at', 'unknown time')
                         print(f"⏭️  Skipping auto-reply: Already replied on {sent_at}")
@@ -881,17 +924,61 @@ class EmailAgent:
             # Compose reply
             reply_subject = f"Re: {subject}" if not subject.lower().startswith('re:') else subject
             
-            # Send the reply with threading headers
+            # Get thread_id from MongoDB if available (for Gmail API threading)
+            thread_id = None
+            if self.mongodb_manager and self.mongodb_manager.emails_collection is not None and message_id:
+                try:
+                    # Handle both actual Message-ID and synthetic Gmail ID formats
+                    email_doc = self.mongodb_manager.emails_collection.find_one({
+                        "$or": [
+                            {"message_id": message_id, "account_id": account_id},
+                            {"gmail_synthetic_id": message_id, "account_id": account_id}
+                        ]
+                    }, {'thread_id': 1, 'gmail_id': 1, 'message_id': 1})
+                    if email_doc:
+                        thread_id = email_doc.get('thread_id', '') or None
+                        gmail_id = email_doc.get('gmail_id', '')
+                        
+                        # If thread_id not in MongoDB but we have gmail_id and OAuth, try to get it
+                        if not thread_id and gmail_id and self.sender.gmail_service:
+                            try:
+                                msg = self.sender.gmail_service.users().messages().get(
+                                    userId='me',
+                                    id=gmail_id,
+                                    format='metadata'
+                                ).execute()
+                                thread_id = msg.get('threadId', '') or None
+                                if thread_id:
+                                    # Update MongoDB with thread_id for future use
+                                    self.mongodb_manager.emails_collection.update_one(
+                                        {"message_id": message_id, "account_id": account_id},
+                                        {"$set": {"thread_id": thread_id}}
+                                    )
+                                    print(f"📎 Retrieved threadId from Gmail API for auto-reply: {thread_id}")
+                            except Exception as e:
+                                print(f"⚠️  Could not retrieve threadId for auto-reply: {e}")
+                except Exception as e:
+                    print(f"⚠️  Could not get thread_id from MongoDB: {e}")
+            
+            # Normalize message_id format for headers
+            normalized_message_id = None
+            if message_id:
+                clean_msg_id = message_id.strip('<>').strip()
+                if clean_msg_id:
+                    normalized_message_id = f"<{clean_msg_id}>" if not clean_msg_id.startswith('<') else clean_msg_id
+            
+            # Send the reply with threading headers and threadId (for Gmail API)
             print(f"📤 Sending auto-reply to: {from_address}")
             print(f"   From account: {self.sender.email_address}")
-            print(f"   Threading: message_id={message_id}")
+            print(f"   Threading: message_id={normalized_message_id}, thread_id={thread_id if thread_id else 'N/A'}")
             success = self.sender.send_email(
                 to=from_address,
                 subject=reply_subject,
                 body=suggested_response,
                 html=False,
-                in_reply_to=message_id if message_id else None,  # Threading header
-                references=message_id if message_id else None     # Threading header
+                in_reply_to=normalized_message_id if normalized_message_id else None,  # Threading header
+                references=normalized_message_id if normalized_message_id else None,   # Threading header
+                thread_id=thread_id  # Gmail API threadId for proper threading
             )
             
             if success:

@@ -343,10 +343,22 @@ class GmailAPIClient:
             except:
                 date_iso = datetime.now().isoformat()
             
+            # Extract actual Message-ID header for proper threading (RFC822 standard)
+            actual_message_id = header_dict.get('message-id', '') or header_dict.get('message_id', '')
+            if not actual_message_id or not actual_message_id.strip():
+                # Fallback to synthetic if no Message-ID header exists
+                actual_message_id = f"<{message['id']}@gmail.com>"
+            else:
+                # Ensure Message-ID has angle brackets
+                actual_message_id = actual_message_id.strip()
+                if not actual_message_id.startswith('<'):
+                    actual_message_id = f"<{actual_message_id}>"
+            
             # Build email dict (compatible with existing email_agent format)
             email_data = {
-                'message_id': f"<{message['id']}@gmail.com>",
+                'message_id': actual_message_id,  # Use actual RFC822 Message-ID header for threading
                 'gmail_id': message['id'],
+                'gmail_synthetic_id': f"<{message['id']}@gmail.com>",  # Keep for backward compatibility
                 'subject': header_dict.get('subject', 'No Subject'),
                 'from': header_dict.get('from', ''),
                 'to': header_dict.get('to', ''),

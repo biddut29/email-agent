@@ -185,8 +185,11 @@ class EmailAgentAPI {
   }
 
   // Generate AI response
-  async generateResponse(emailId: string, tone: string = 'professional') {
+  async generateResponse(emailId: string, tone: string = 'professional', messageId?: string) {
     const params = new URLSearchParams({ email_id: emailId, tone });
+    if (messageId) {
+      params.append('message_id', messageId);
+    }
     return this.request<{
       success: boolean;
       response: string;

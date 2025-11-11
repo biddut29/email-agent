@@ -58,7 +58,7 @@ export default function EmailDashboard() {
   const [searchQuery, setSearchQuery] = useState('');
   const [replyBody, setReplyBody] = useState('');
   const [activeTab, setActiveTab] = useState('mongodb');
-  const [dateFilter, setDateFilter] = useState<string>('all');
+  const [dateFilter, setDateFilter] = useState<string>('today');
   const [customDateFrom, setCustomDateFrom] = useState<Date | undefined>(undefined);
   const [customDateTo, setCustomDateTo] = useState<Date | undefined>(undefined);
 
@@ -120,7 +120,10 @@ export default function EmailDashboard() {
     
     switch (filter) {
       case 'today':
-        return { from: format(today, 'yyyy-MM-dd') };
+        return { 
+          from: format(today, 'yyyy-MM-dd'),
+          to: format(today, 'yyyy-MM-dd')
+        };
       case 'last7':
         return { from: format(subDays(today, 7), 'yyyy-MM-dd') };
       case 'last30':
@@ -134,7 +137,6 @@ export default function EmailDashboard() {
           from: customDateFrom ? format(customDateFrom, 'yyyy-MM-dd') : undefined,
           to: customDateTo ? format(customDateTo, 'yyyy-MM-dd') : undefined,
         };
-      case 'all':
       default:
         return {};
     }
@@ -151,12 +153,33 @@ export default function EmailDashboard() {
       const { from, to } = getDateRange(dateFilter);
       
       // Use higher limit for filtered queries to get all emails in the date range
-      const limit = (dateFilter !== 'all' || unreadOnly) ? 200 : 20;
+      const limit = 200;
       
       const response = await api.getEmails(limit, unreadOnly, 'INBOX', from, to);
-      setEmails(response.emails);
-    } catch (error) {
+      
+      // Check for errors in response (response may have error property even if not in type)
+      const responseWithError = response as any;
+      if (response.success === false || responseWithError.error) {
+        console.error('Email loading error:', response);
+        alert(`Failed to load emails: ${responseWithError.error || 'No active email account. Please add an account first.'}`);
+        setEmails([]);
+        return;
+      }
+      
+      // Handle response - check if emails array exists
+      if (response.emails && Array.isArray(response.emails)) {
+        setEmails(response.emails);
+        console.log(`✓ Loaded ${response.emails.length} emails`);
+      } else {
+        console.warn('Unexpected response format:', response);
+        setEmails([]);
+      }
+    } catch (error: any) {
       console.error('Failed to load emails:', error);
+      // Show user-friendly error message
+      const errorMessage = error.message || 'Failed to connect to backend. Please ensure the backend is running.';
+      alert(`Error loading emails: ${errorMessage}`);
+      setEmails([]);
     } finally {
       setLoading(false);
     }
@@ -198,11 +221,22 @@ export default function EmailDashboard() {
 
     setLoading(true);
     try {
-      const response = await api.generateResponse(selectedEmail.id, 'professional');
-      setAiResponse(response.response);
-      setReplyBody(response.response);
-    } catch (error) {
+      // Use message_id if available (for MongoDB/Gmail API emails), otherwise use id
+      const emailIdentifier = selectedEmail.message_id || selectedEmail.id || '';
+      const response = await api.generateResponse(
+        emailIdentifier, 
+        'professional', 
+        selectedEmail.message_id || undefined
+      );
+      if (response.success) {
+        setAiResponse(response.response);
+        setReplyBody(response.response);
+      } else {
+        alert('Failed to generate AI response');
+      }
+    } catch (error: any) {
       console.error('Failed to generate AI response:', error);
+      alert(`Failed to generate AI response: ${error.message || 'Unknown error'}`);
     } finally {
       setLoading(false);
     }
@@ -213,13 +247,33 @@ export default function EmailDashboard() {
 
     setLoading(true);
     try {
-      await api.replyToEmail(selectedEmail.id, replyBody);
-      alert('Reply sent successfully!');
-      setReplyBody('');
-      setAiResponse('');
-    } catch (error) {
+      // Use message_id if available (for MongoDB/Gmail API emails), otherwise use id
+      const messageId = selectedEmail.message_id || selectedEmail.id;
+      if (!messageId) {
+        alert('Error: Email ID not found');
+        return;
+      }
+
+      // Use sendReply for MongoDB emails (uses message_id), fallback to replyToEmail for IMAP
+      if (selectedEmail.message_id) {
+        const response = await api.sendReply(selectedEmail.message_id, replyBody);
+        if (response.success) {
+          alert(`Reply sent successfully to ${response.to}!`);
+          setReplyBody('');
+          setAiResponse('');
+        } else {
+          alert('Failed to send reply');
+        }
+      } else {
+        // Fallback for IMAP emails
+        await api.replyToEmail(selectedEmail.id, replyBody);
+        alert('Reply sent successfully!');
+        setReplyBody('');
+        setAiResponse('');
+      }
+    } catch (error: any) {
       console.error('Failed to send reply:', error);
-      alert('Failed to send reply');
+      alert(`Failed to send reply: ${error.message || 'Unknown error'}`);
     } finally {
       setLoading(false);
     }
@@ -248,15 +302,19 @@ export default function EmailDashboard() {
 
   const getCategoryColor = (category: string) => {
     const colors: Record<string, string> = {
-      urgent: 'destructive',
-      important: 'default',
-      spam: 'secondary',
-      promotional: 'outline',
-      personal: 'default',
-      work: 'default',
-      newsletter: 'secondary',
+      'work': 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
+      'personal': 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200',
+      'finance': 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200',
+      'marketing': 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200',
+      'social': 'bg-pink-100 text-pink-800 dark:bg-pink-900 dark:text-pink-200',
+      'urgent': 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200',
+      'important': 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200',
+      'spam': 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200',
+      'promotional': 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200',
+      'newsletter': 'bg-cyan-100 text-cyan-800 dark:bg-cyan-900 dark:text-cyan-200',
+      'other': 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200',
     };
-    return colors[category] || 'outline';
+    return colors[category.toLowerCase()] || colors['other'];
   };
 
   const formatDate = (dateString: string) => {
@@ -390,7 +448,6 @@ export default function EmailDashboard() {
                   <SelectValue placeholder="Select time period" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All Emails</SelectItem>
                   <SelectItem value="today">Today</SelectItem>
                   <SelectItem value="last7">Last 7 Days</SelectItem>
                   <SelectItem value="last30">Last 30 Days</SelectItem>
@@ -410,7 +467,7 @@ export default function EmailDashboard() {
                 Load to Vector
               </Button>
 
-              {dateFilter !== 'all' && dateFilter !== 'custom' && (
+              {dateFilter !== 'custom' && (
                 <Badge variant="secondary" className="ml-auto">
                   {dateFilter === 'today' && '📅 Today'}
                   {dateFilter === 'last7' && '📅 Last 7 Days'}
@@ -506,12 +563,12 @@ export default function EmailDashboard() {
               <CardHeader>
                 <CardTitle className="flex items-center justify-between">
                   <span>Emails ({emails.length})</span>
-                  {dateFilter !== 'all' && emails.length >= 200 && (
+                  {emails.length >= 200 && (
                     <Badge variant="secondary" className="text-xs">
                       Limited to 200 (max reached)
                     </Badge>
                   )}
-                  {dateFilter !== 'all' && emails.length < 200 && emails.length > 0 && (
+                  {emails.length < 200 && emails.length > 0 && (
                     <Badge variant="outline" className="text-xs">
                       All emails loaded
                     </Badge>
@@ -520,45 +577,74 @@ export default function EmailDashboard() {
                 <CardDescription>Click to view details</CardDescription>
               </CardHeader>
               <CardContent>
-                <ScrollArea className="h-[600px]">
-                  <div className="space-y-2">
-                    {emails.map((email) => (
+                <ScrollArea className="h-[600px] pr-4">
+                  <div className="space-y-3">
+                    {emails.map((email, idx) => (
                       <Card
                         key={email.id}
-                        className={`cursor-pointer transition-all hover:shadow-md ${
-                          selectedEmail?.id === email.id ? 'ring-2 ring-primary' : ''
+                        className={`cursor-pointer transition-colors hover:bg-accent ${
+                          selectedEmail?.id === email.id ? 'bg-accent' : ''
                         }`}
                         onClick={() => setSelectedEmail(email)}
                       >
-                        <CardContent className="pt-4">
+                        <CardContent className="p-4">
                           <div className="space-y-2">
-                            <div className="flex items-start justify-between">
-                              <h3 className="font-semibold line-clamp-1">{email.subject}</h3>
-                              {email.ai_analysis?.category && (
-                                <Badge variant={getCategoryColor(email.ai_analysis.category) as any}>
-                                  {email.ai_analysis.category}
+                            <div className="flex items-start justify-between gap-2">
+                              <h3 className="font-semibold line-clamp-1">
+                                {email.subject || 'No Subject'}
+                              </h3>
+                              <Badge variant="outline" className="text-xs shrink-0">
+                                #{idx + 1}
+                              </Badge>
+                            </div>
+                            
+                            <p className="text-sm text-muted-foreground line-clamp-1">
+                              From: {email.from}
+                            </p>
+                            
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                                <CalendarIcon className="w-3 h-3" />
+                                {formatDate(email.date)}
+                              </div>
+                              
+                              {email.ai_analysis && (
+                                <>
+                                  <Badge className={getCategoryColor(email.ai_analysis.category)}>
+                                    {email.ai_analysis.category}
+                                  </Badge>
+                                  
+                                  {email.ai_analysis.urgency_score >= 7 && (
+                                    <Badge variant="destructive" className="text-xs">
+                                      Urgent
+                                    </Badge>
+                                  )}
+                                  
+                                  {email.ai_analysis.is_spam && (
+                                    <Badge variant="secondary" className="text-xs">
+                                      Spam
+                                    </Badge>
+                                  )}
+                                </>
+                              )}
+                              
+                              {email.has_attachments && (
+                                <Badge variant="outline" className="text-xs">
+                                  📎 {email.attachments?.length || 0}
                                 </Badge>
                               )}
                             </div>
-                            <p className="text-sm text-muted-foreground line-clamp-1">
-                              {email.from}
-                            </p>
-                            <p className="text-xs text-muted-foreground">
-                              {formatDate(email.date)}
-                            </p>
-                            {email.has_attachments && (
-                              <Badge variant="outline" className="text-xs">
-                                📎 {email.attachments.length} attachment(s)
-                              </Badge>
-                            )}
                           </div>
                         </CardContent>
                       </Card>
                     ))}
                     {emails.length === 0 && (
-                      <div className="text-center py-12 text-muted-foreground">
-                        <Mail className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                        <p>No emails loaded. Click "Load Emails" to fetch.</p>
+                      <div className="text-center py-16">
+                        <div className="w-16 h-16 mx-auto rounded-full bg-muted flex items-center justify-center mb-4">
+                          <Mail className="w-8 h-8 text-muted-foreground opacity-50" />
+                        </div>
+                        <p className="text-base font-medium text-foreground mb-2">No emails loaded</p>
+                        <p className="text-sm text-muted-foreground">Click "Load Emails" to fetch your emails</p>
                       </div>
                     )}
                   </div>
@@ -585,54 +671,79 @@ export default function EmailDashboard() {
               <CardContent>
                 {selectedEmail ? (
                   <ScrollArea className="h-[600px]">
-                    <div className="space-y-4">
-                      <div>
-                        <h3 className="text-2xl font-bold">{selectedEmail.subject}</h3>
-                        <Separator className="my-4" />
-                        <div className="space-y-2 text-sm">
-                          <p><strong>From:</strong> {selectedEmail.from}</p>
-                          <p><strong>To:</strong> {selectedEmail.to}</p>
-                          <p><strong>Date:</strong> {formatDate(selectedEmail.date)}</p>
+                    <div className="space-y-6">
+                      {/* Email Header */}
+                      <div className="space-y-4">
+                        <div>
+                          <h2 className="text-2xl font-bold mb-3 leading-tight">
+                            {selectedEmail.subject || '(No Subject)'}
+                          </h2>
+                          <Separator />
+                        </div>
+                        <div className="grid gap-3 text-sm">
+                          <div className="flex items-start gap-3">
+                            <span className="font-semibold text-muted-foreground min-w-[60px]">From:</span>
+                            <span className="flex-1">{selectedEmail.from}</span>
+                          </div>
+                          <div className="flex items-start gap-3">
+                            <span className="font-semibold text-muted-foreground min-w-[60px]">To:</span>
+                            <span className="flex-1">{selectedEmail.to}</span>
+                          </div>
+                          <div className="flex items-start gap-3">
+                            <span className="font-semibold text-muted-foreground min-w-[60px]">Date:</span>
+                            <span className="flex-1 flex items-center gap-2">
+                              <CalendarIcon className="w-4 h-4" />
+                              {formatDate(selectedEmail.date)}
+                            </span>
+                          </div>
                         </div>
                       </div>
 
                       {selectedEmail.ai_analysis && (
-                        <Card className="bg-muted/50">
-                          <CardHeader>
-                            <CardTitle className="text-sm flex items-center gap-2">
-                              <Sparkles className="w-4 h-4" />
+                        <Card className="bg-gradient-to-br from-primary/5 to-primary/10 border-primary/20">
+                          <CardHeader className="pb-3">
+                            <CardTitle className="text-base flex items-center gap-2">
+                              <Sparkles className="w-4 h-4 text-primary" />
                               AI Analysis
                             </CardTitle>
                           </CardHeader>
-                          <CardContent className="space-y-2 text-sm">
+                          <CardContent className="space-y-3 text-sm">
                             <div className="flex items-center gap-2">
-                              <span className="font-semibold">Category:</span>
-                              <Badge variant={getCategoryColor(selectedEmail.ai_analysis.category) as any}>
+                              <span className="font-semibold text-muted-foreground">Category:</span>
+                              <Badge className={`${getCategoryColor(selectedEmail.ai_analysis.category)} text-xs`}>
                                 {selectedEmail.ai_analysis.category}
                               </Badge>
                             </div>
                             {selectedEmail.ai_analysis.urgency_score > 6 && (
-                              <div className="flex items-center gap-2 text-orange-600">
-                                <AlertCircle className="w-4 h-4" />
-                                <span>High Urgency ({selectedEmail.ai_analysis.urgency_score}/10)</span>
+                              <div className="flex items-center gap-2 p-2 rounded-md bg-orange-50 dark:bg-orange-950/30 border border-orange-200 dark:border-orange-800">
+                                <AlertCircle className="w-4 h-4 text-orange-600 dark:text-orange-400" />
+                                <span className="font-medium text-orange-700 dark:text-orange-300">
+                                  High Urgency ({selectedEmail.ai_analysis.urgency_score}/10)
+                                </span>
                               </div>
                             )}
                             {selectedEmail.ai_analysis.summary && (
-                              <div>
-                                <span className="font-semibold">Summary:</span>
-                                <p className="mt-1">{selectedEmail.ai_analysis.summary}</p>
+                              <div className="pt-2 border-t">
+                                <span className="font-semibold text-muted-foreground block mb-1.5">Summary:</span>
+                                <p className="text-foreground leading-relaxed">{selectedEmail.ai_analysis.summary}</p>
                               </div>
                             )}
                           </CardContent>
                         </Card>
                       )}
 
-                      <div>
-                        <h4 className="font-semibold mb-2">Message:</h4>
-                        <Card>
-                          <CardContent className="pt-4">
-                            <div className="whitespace-pre-wrap text-sm">
-                              {selectedEmail.text_body || 'No text content'}
+                      {/* Email Body */}
+                      <div className="space-y-3">
+                        <h4 className="font-semibold text-base flex items-center gap-2">
+                          <MailOpen className="w-4 h-4" />
+                          Message
+                        </h4>
+                        <Card className="bg-muted/30">
+                          <CardContent className="pt-6">
+                            <div className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">
+                              {selectedEmail.text_body || (
+                                <span className="text-muted-foreground italic">No text content available</span>
+                              )}
                             </div>
                           </CardContent>
                         </Card>
@@ -640,43 +751,65 @@ export default function EmailDashboard() {
 
                       <Separator />
 
-                      <div className="space-y-3">
-                        <div className="flex gap-2">
+                      {/* Reply Section */}
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                          <h4 className="font-semibold text-base flex items-center gap-2">
+                            <MessageSquare className="w-4 h-4" />
+                            Reply
+                          </h4>
                           <Button
                             onClick={handleGenerateAIResponse}
                             disabled={loading}
-                            className="flex-1"
+                            variant="outline"
+                            size="sm"
+                            className="gap-2"
                           >
-                            <Sparkles className="w-4 h-4 mr-2" />
+                            <Sparkles className="w-4 h-4" />
                             Generate AI Response
                           </Button>
                         </div>
 
                         {aiResponse && (
-                          <Card className="bg-green-50 dark:bg-green-950">
-                            <CardHeader>
-                              <CardTitle className="text-sm">AI Generated Response</CardTitle>
+                          <Card className="bg-gradient-to-br from-green-50 to-emerald-50 dark:from-green-950/30 dark:to-emerald-950/30 border-green-200 dark:border-green-800">
+                            <CardHeader className="pb-3">
+                              <CardTitle className="text-sm flex items-center gap-2 text-green-700 dark:text-green-300">
+                                <Sparkles className="w-4 h-4" />
+                                AI Generated Response
+                              </CardTitle>
                             </CardHeader>
                             <CardContent>
-                              <p className="text-sm whitespace-pre-wrap">{aiResponse}</p>
+                              <div className="whitespace-pre-wrap text-sm leading-relaxed text-green-900 dark:text-green-100">
+                                {aiResponse}
+                              </div>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="mt-3 text-xs"
+                                onClick={() => setReplyBody(aiResponse)}
+                              >
+                                Use this response
+                              </Button>
                             </CardContent>
                           </Card>
                         )}
 
-                        <div className="space-y-2">
-                          <label className="text-sm font-semibold">Your Reply:</label>
+                        <div className="space-y-3">
+                          <label className="text-sm font-semibold block">Your Reply:</label>
                           <Textarea
                             placeholder="Type your reply here..."
                             value={replyBody}
                             onChange={(e) => setReplyBody(e.target.value)}
-                            rows={6}
+                            rows={8}
+                            className="resize-none font-mono text-sm"
                           />
                           <Button
                             onClick={handleSendReply}
                             disabled={loading || !replyBody.trim()}
-                            className="w-full"
+                            className="w-full gap-2"
+                            size="lg"
                           >
-                            <Send className="w-4 h-4 mr-2" />
+                            <Send className="w-4 h-4" />
                             Send Reply
                           </Button>
                         </div>
@@ -684,10 +817,15 @@ export default function EmailDashboard() {
                     </div>
                   </ScrollArea>
                 ) : (
-                  <div className="h-[600px] flex items-center justify-center text-muted-foreground">
-                    <div className="text-center">
-                      <Mail className="w-16 h-16 mx-auto mb-4 opacity-50" />
-                      <p>Select an email to view details</p>
+                  <div className="h-[600px] flex items-center justify-center">
+                    <div className="text-center space-y-4">
+                      <div className="w-20 h-20 mx-auto rounded-full bg-muted flex items-center justify-center">
+                        <Mail className="w-10 h-10 text-muted-foreground opacity-50" />
+                      </div>
+                      <div className="space-y-2">
+                        <p className="text-lg font-semibold text-foreground">No email selected</p>
+                        <p className="text-sm text-muted-foreground">Click on an email from the list to view its details</p>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -789,7 +927,7 @@ export default function EmailDashboard() {
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     {Object.entries(stats.categories).map(([category, count]) => (
                       <div key={category} className="text-center p-4 border rounded-lg">
-                        <Badge variant={getCategoryColor(category) as any} className="mb-2">
+                        <Badge className={`${getCategoryColor(category)} mb-2`}>
                           {category}
                         </Badge>
                         <p className="text-2xl font-bold">{count}</p>

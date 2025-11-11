@@ -25,7 +25,7 @@ class MongoDBManager:
             if connection_string is None:
                 connection_string = os.getenv("MONGODB_URI", "mongodb://localhost:27017/")
             
-            self.client = MongoClient(connection_string, serverSelectionTimeoutMS=5000)
+            self.client = MongoClient(connection_string, serverSelectionTimeoutMS=2000)  # Reduced from 5000ms to 2000ms
             
             # Test connection
             self.client.admin.command('ping')
@@ -39,7 +39,16 @@ class MongoDBManager:
             self._create_indexes()
             
             print(f"✓ MongoDB connected: {db_name}")
-            print(f"  Total emails in database: {self.emails_collection.count_documents({})}")
+            # Skip counting all documents on startup (can be very slow with many emails)
+            # Use estimated_document_count() for faster startup, or skip entirely
+            try:
+                # Use estimated count which is much faster (uses collection metadata)
+                estimated_count = self.emails_collection.estimated_document_count()
+                if estimated_count > 0:
+                    print(f"  Estimated emails in database: ~{estimated_count}")
+            except:
+                # If estimated count fails, just skip it - not critical for startup
+                pass
             
         except Exception as e:
             print(f"⚠ MongoDB connection failed: {e}")
@@ -588,10 +597,10 @@ class MongoDBManager:
     
     def get_reply(self, email_message_id: str, account_id: int) -> Optional[Dict]:
         """
-        Get reply for a specific email
+        Get reply for a specific email (checks both actual and synthetic message_id formats)
         
         Args:
-            email_message_id: Email message ID
+            email_message_id: Email message ID (can be actual Message-ID or synthetic)
             account_id: Account ID
             
         Returns:
@@ -601,8 +610,7 @@ class MongoDBManager:
             return None
         
         try:
-            # find_one() is optimized for single document queries
-            # MongoDB will automatically use the compound index if it exists
+            # First try with the provided message_id
             reply = self.replies_collection.find_one(
                 {
                     "email_message_id": email_message_id,
@@ -616,6 +624,42 @@ class MongoDBManager:
                 if 'sent_at' in reply and isinstance(reply['sent_at'], datetime):
                     reply['sent_at'] = reply['sent_at'].isoformat()
                 return reply
+            
+            # If not found, try to find the email and check with alternate message_id format
+            if self.emails_collection is not None:
+                email_doc = self.emails_collection.find_one({
+                    "$or": [
+                        {"message_id": email_message_id, "account_id": account_id},
+                        {"gmail_synthetic_id": email_message_id, "account_id": account_id}
+                    ]
+                }, {'gmail_synthetic_id': 1, 'message_id': 1})
+                
+                if email_doc:
+                    # Get the alternate message_id format
+                    synthetic_id = email_doc.get('gmail_synthetic_id')
+                    actual_id = email_doc.get('message_id')
+                    
+                    # Try the alternate format
+                    alternate_id = None
+                    if email_message_id == synthetic_id and actual_id:
+                        alternate_id = actual_id
+                    elif email_message_id == actual_id and synthetic_id:
+                        alternate_id = synthetic_id
+                    
+                    if alternate_id:
+                        reply = self.replies_collection.find_one(
+                            {
+                                "email_message_id": alternate_id,
+                                "account_id": account_id
+                            },
+                            {"_id": 0}
+                        )
+                        
+                        if reply:
+                            if 'sent_at' in reply and isinstance(reply['sent_at'], datetime):
+                                reply['sent_at'] = reply['sent_at'].isoformat()
+                            return reply
+            
             return None
         
         except Exception as e:
