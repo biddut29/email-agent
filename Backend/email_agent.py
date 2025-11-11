@@ -881,14 +881,17 @@ class EmailAgent:
             # Compose reply
             reply_subject = f"Re: {subject}" if not subject.lower().startswith('re:') else subject
             
-            # Send the reply
+            # Send the reply with threading headers
             print(f"📤 Sending auto-reply to: {from_address}")
             print(f"   From account: {self.sender.email_address}")
+            print(f"   Threading: message_id={message_id}")
             success = self.sender.send_email(
                 to=from_address,
                 subject=reply_subject,
                 body=suggested_response,
-                html=False
+                html=False,
+                in_reply_to=message_id if message_id else None,  # Threading header
+                references=message_id if message_id else None     # Threading header
             )
             
             if success:

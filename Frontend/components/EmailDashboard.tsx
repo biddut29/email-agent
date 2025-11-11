@@ -285,8 +285,10 @@ export default function EmailDashboard() {
           </p>
         </div>
         <div className="flex items-center gap-4">
-          {/* Account Manager */}
-          <AccountManager onAccountChange={handleAccountChange} />
+          {/* Account Manager - Hidden */}
+          <div className="hidden">
+            <AccountManager onAccountChange={handleAccountChange} />
+          </div>
 
           {/* Logout Button */}
           <Button

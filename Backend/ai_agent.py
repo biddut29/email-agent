@@ -24,22 +24,30 @@ class AIAgent:
         self.azure_deployment = None
         
         # Initialize Azure OpenAI client
-        if config.USE_AZURE_OPENAI and self.provider == "azure":
+        # Read provider from database directly (not from module-level variables which are set at import time)
+        db_provider = config.get_config_value("ai_provider", "AI_PROVIDER", "azure")
+        if db_provider.lower() == "azure" and self.provider == "azure":
             try:
                 from openai import AzureOpenAI
                 
+                # Read from database directly (not from module-level variables which are set at import time)
+                azure_key = config.get_config_value("azure_openai_key", "AZURE_OPENAI_KEY", "")
+                azure_endpoint = config.get_config_value("azure_openai_endpoint", "AZURE_OPENAI_ENDPOINT", "")
+                azure_deployment = config.get_config_value("azure_openai_deployment", "AZURE_OPENAI_DEPLOYMENT", "gpt-4.1-mini")
+                azure_api_version = config.get_config_value("azure_openai_api_version", "AZURE_OPENAI_API_VERSION", "2024-12-01-preview")
+                
                 # Check if Azure OpenAI credentials are configured
-                if not config.AZURE_OPENAI_KEY or not config.AZURE_OPENAI_ENDPOINT:
-                    print("⚠ Azure OpenAI credentials not configured. Check .env file for AZURE_OPENAI_KEY and AZURE_OPENAI_ENDPOINT")
+                if not azure_key or not azure_endpoint:
+                    print("⚠ Azure OpenAI credentials not configured. Please configure in admin panel or database.")
                 else:
                     self.client = AzureOpenAI(
-                        api_key=config.AZURE_OPENAI_KEY,
-                        api_version=config.AZURE_OPENAI_API_VERSION,
-                        azure_endpoint=config.AZURE_OPENAI_ENDPOINT
+                        api_key=azure_key,
+                        api_version=azure_api_version,
+                        azure_endpoint=azure_endpoint
                     )
-                    self.azure_deployment = config.AZURE_OPENAI_DEPLOYMENT
+                    self.azure_deployment = azure_deployment
                     print(f"✓ Azure OpenAI client initialized (deployment: {self.azure_deployment})")
-                    print(f"  Endpoint: {config.AZURE_OPENAI_ENDPOINT[:50]}...")
+                    print(f"  Endpoint: {azure_endpoint[:50]}...")
             except ImportError:
                 print("⚠ OpenAI package not installed. Run: pip install openai")
                 self.client = None
@@ -437,80 +445,112 @@ Best regards,
             sender_email = config.EMAIL_ADDRESS if hasattr(config, 'EMAIL_ADDRESS') else 'bidduttest@gmail.com'
             sender_name = sender_email.split('@')[0].replace('.', ' ').title()
             
-            prompt = f"""You are an intelligent email assistant. Analyze the email below and generate a thoughtful, contextual response.
+            prompt = f"""You are an expert email writing assistant that helps draft natural, conversational email replies. You write in a clear, concise tone that matches the sender's communication style.
 
-EMAIL TO ANALYZE:
+EMAIL TO REPLY TO:
 From: {from_name} ({from_email})
 Subject: {subject}
 Body: {body}
 
-ANALYSIS INSTRUCTIONS:
-1. Read the entire email carefully - understand the sender's intent, questions, requests, or information shared
-2. Identify the key points: What are they asking? What do they need? What information are they sharing?
-3. Determine the appropriate tone: Match their communication style (formal/professional vs casual/friendly)
-4. Consider context: Is this a follow-up? A new conversation? A response to something?
+YOUR TASK:
+Understand the sender's intent (question, request, greeting, information sharing, etc.) and write a natural, direct reply.
 
-RESPONSE REQUIREMENTS:
-- Be SPECIFIC and address their actual message content - don't use generic phrases
-- Answer any questions they asked directly
-- Acknowledge any requests or information they shared
-- Match their tone (if casual, be friendly; if formal, be professional)
-- Keep it concise (2-4 sentences) but meaningful
-- Be natural and conversational - avoid robotic or template-like language
-- If they're greeting you, respond naturally to the greeting
-- If they're asking something, provide a helpful answer
-- If they're sharing information, acknowledge it appropriately
+CRITICAL RULES - FOLLOW STRICTLY:
+1. NEVER start with "Thank you for your email" or "Hi [Name], Thank you for your email"
+2. NEVER use "Regarding your question" or "Regarding [topic]"
+3. NEVER use "I received your message" or "Thank you for reaching out"
+4. NEVER use formal business email templates
+5. ALWAYS answer questions directly and naturally
+6. Match the sender's tone - if they're casual, be casual; if formal, be professional
+7. Keep responses concise (2-4 sentences) but meaningful
+8. Write as if texting a friend (for casual emails) - be friendly, warm, conversational
 
-CRITICAL: DO NOT use generic phrases like:
-- "Thank you for your email regarding [subject]"
-- "I received your message"
-- "Thank you for reaching out"
-- Any template-like responses
+WHAT TO DO:
+- If they ask "How are you?" → Start directly: "I'm doing well, thanks! How about you?"
+- If they ask "where are you?" → Start directly: "I'm here and available. What's up!"
+- If they ask "are you okay?" → Start directly: "Yes, I'm doing great! How are you?" (NO "Thank you for your email" or "Regarding your question")
+- If they ask "what is the status of your health?" → Start directly: "All good here! How are you?"
+- If they ask any question → Answer it directly, don't preface with thank yous or formal greetings
+- If they share news → Acknowledge naturally: "That's great!" or "Thanks for letting me know!"
+- If they greet you → Respond naturally: "Hi! How can I help?" or "Hey! What's up!"
 
-INSTEAD: Respond directly to what they said. For example:
-- If they ask "How are you?" → Respond naturally to the question
-- If they ask "Can you help with X?" → Address their specific request
-- If they share news → Acknowledge it appropriately
-- If they greet you → Respond to the greeting naturally
+BAD EXAMPLES (DO NOT DO THIS - THESE ARE WRONG):
+❌ "Hi Biddut Hossain, Thank you for your email. Regarding your question: are you okay? Let me look into that."
+❌ "Hi Biddut Hossain, Thank you for your email. Regarding your question: where are you? Let me look into that."
+❌ "Thank you for reaching out. I received your message about your health status."
+❌ "Hi, Thank you for your email regarding [subject]."
+❌ ANY response that starts with "Thank you for your email" or "Regarding your question"
 
-Sign as "{sender_name}" from {sender_email}
+GOOD EXAMPLES (DO THIS - THESE ARE CORRECT):
+✅ "Yes, I'm doing great! How are you?" (for "are you okay?")
+✅ "I'm here and available. What's up!" (for "where are you?")
+✅ "All good here! How are you?" (for health status questions)
+✅ "I'm doing well, thanks! How about you?" (for "how are you?")
+✅ "Hey! What's up!" (for casual greetings)
+
+OUTPUT:
+- Write only the email body (no subject line needed - it's a reply)
+- Start your response directly - no formal greetings or thank yous
+- Answer their question or respond to their message immediately
+- Keep it natural and human-like
+- CRITICAL: You MUST end with exactly this format (use actual newlines):
+  [your response text]
+  
+  Best regards,
+  {sender_name}
+- DO NOT write "Best" alone - it must be "Best regards,"
+- DO NOT include email addresses in the signature
+- The words "Best regards," must be on their own line, followed by a newline, then the name
 
 Now, write a natural, helpful response that directly addresses their message:
 
 Response:"""
             
             if self.provider == "azure":
+                # Re-read deployment from config in case it changed
+                if not self.azure_deployment:
+                    self.azure_deployment = config.get_config_value("azure_openai_deployment", "AZURE_OPENAI_DEPLOYMENT", "gpt-4.1-mini")
+                
                 response = self.client.chat.completions.create(
                     model=self.azure_deployment,
                     messages=[
-                        {"role": "system", "content": "You are an intelligent email assistant that analyzes emails deeply and generates thoughtful, contextual responses. Always read the subject and body carefully, understand the intent, and respond appropriately - never use generic templates."},
+                        {"role": "system", "content": "You are an expert email writing assistant. You write natural, conversational email replies. CRITICAL: NEVER start with 'Thank you for your email' or 'Hi [Name], Thank you for your email'. NEVER use 'Regarding your question' or 'I received your message'. Always answer questions directly and immediately, as if texting a friend. For 'what is your health condition?' respond with 'All good here! How are you?' - NO formal prefaces. ALWAYS end with 'Best regards,' on a separate line, followed by the sender name on the next line. DO NOT include email addresses in signatures."},
                         {"role": "user", "content": prompt}
                     ],
-                    temperature=0.8,  # Slightly higher for more natural responses
-                    max_tokens=400  # Increased for more detailed responses
+                    temperature=1.0,  # Higher temperature for more natural, creative responses
+                    max_tokens=400
                 )
-                return response.choices[0].message.content.strip()
+                response_text = response.choices[0].message.content.strip()
+                cleaned_response = self._clean_formal_phrases(response_text, body)
+                print(f"🔍 After cleanup - Original length: {len(response_text)}, Cleaned length: {len(cleaned_response)}")
+                return cleaned_response
             
             elif self.provider == "openai":
                 response = self.client.chat.completions.create(
                     model="gpt-3.5-turbo",
                     messages=[
-                        {"role": "system", "content": "You are an intelligent email assistant that analyzes emails deeply and generates thoughtful, contextual responses. Always read the subject and body carefully, understand the intent, and respond appropriately - never use generic templates."},
+                        {"role": "system", "content": "You are an expert email writing assistant. You write natural, conversational email replies. CRITICAL: NEVER start with 'Thank you for your email' or 'Hi [Name], Thank you for your email'. NEVER use 'Regarding your question' or 'I received your message'. Always answer questions directly and immediately, as if texting a friend. For 'what is your health condition?' respond with 'All good here! How are you?' - NO formal prefaces. ALWAYS end with 'Best regards,' on a separate line, followed by the sender name on the next line. DO NOT include email addresses in signatures."},
                         {"role": "user", "content": prompt}
                     ],
-                    temperature=0.8,
+                    temperature=1.0,
                     max_tokens=400
                 )
-                return response.choices[0].message.content.strip()
+                response_text = response.choices[0].message.content.strip()
+                cleaned_response = self._clean_formal_phrases(response_text, body)
+                print(f"🔍 After cleanup - Original length: {len(response_text)}, Cleaned length: {len(cleaned_response)}")
+                return cleaned_response
             
             elif self.provider == "anthropic":
                 response = self.client.messages.create(
                     model="claude-3-haiku-20240307",
                     max_tokens=400,
-                    system="You are an intelligent email assistant that analyzes emails deeply and generates thoughtful, contextual responses. Always read the subject and body carefully, understand the intent, and respond appropriately - never use generic templates.",
+                    system="You are an expert email writing assistant. You write natural, conversational email replies. CRITICAL: NEVER start with 'Thank you for your email' or 'Hi [Name], Thank you for your email'. NEVER use 'Regarding your question' or 'I received your message'. Always answer questions directly and immediately, as if texting a friend. For 'what is your health condition?' respond with 'All good here! How are you?' - NO formal prefaces. ALWAYS end with 'Best regards,' on a separate line, followed by the sender name on the next line. DO NOT include email addresses in signatures.",
                     messages=[{"role": "user", "content": prompt}]
                 )
-                return response.content[0].text.strip()
+                response_text = response.content[0].text.strip()
+                cleaned_response = self._clean_formal_phrases(response_text, body)
+                print(f"🔍 After cleanup - Original length: {len(response_text)}, Cleaned length: {len(cleaned_response)}")
+                return cleaned_response
             
         except Exception as e:
             print(f"❌ AI response generation failed: {e}")
@@ -577,6 +617,171 @@ Response:"""
                     reason = f"Body contains '{keyword}'"
         
         return max_score, reason
+    
+    def _clean_formal_phrases(self, response_text: str, original_email_body: str = None) -> str:
+        """
+        Remove formal template phrases and repeated original email content from AI response
+        VERY AGGRESSIVE - removes ANY trace of formal templates or repeated content
+        """
+        try:
+            if not response_text:
+                return response_text
+            
+            import re
+            
+            print(f"🧹 CLEANUP INPUT (first 300 chars): {response_text[:300]}")
+            
+            # Step 1: Process line-by-line FIRST to remove entire lines with formal phrases
+            lines = response_text.split('\n')
+            filtered_lines = []
+            
+            for line in lines:
+                line_stripped = line.strip()
+                if not line_stripped:
+                    continue
+                
+                line_lower = line_stripped.lower()
+                
+                # Skip entire lines that contain formal phrases
+                skip_line = False
+                for phrase in [
+                    'thank you for your email',
+                    'thank you for asking',
+                    'thanks for asking',
+                    'hi ', 'hello ', 'dear ',
+                    'regarding',
+                    'regarding your question',
+                    'regarding the',
+                    'i received your message',
+                    'i have received your message',
+                    'will respond accordingly',
+                    # REMOVED: 'best regards' - we want to keep this for signature
+                    'sincerely',
+                    'i see you reached out',
+                    'i see you contacted',
+                    'i see you reached',
+                    'reached out about',
+                    'reached out',
+                    'let me look into this',
+                    'get back to you',
+                    'how can i help you today',
+                    'how can i help'
+                ]:
+                    if phrase in line_lower:
+                        skip_line = True
+                        break
+                
+                if skip_line:
+                    continue  # Skip this entire line
+                
+                # Also skip lines that are just repeating original content
+                if original_email_body and original_email_body.strip():
+                    original_lower = original_email_body.lower().strip()
+                    original_words = set(re.sub(r'[^\w\s]', '', original_lower).split())
+                    line_words = set(re.sub(r'[^\w\s]', '', line_lower).split())
+                    if line_words and original_words:
+                        overlap = line_words.intersection(original_words)
+                        # If 60%+ of words overlap, skip this line
+                        if len(overlap) >= len(line_words) * 0.6:
+                            continue
+                
+                filtered_lines.append(line_stripped)
+            
+            # Step 2: Join and do aggressive regex cleanup
+            cleaned = '\n'.join(filtered_lines).strip()
+            
+            # Remove ALL formal patterns - very aggressive regex (handle multiline)
+            cleaned = re.sub(r'^(Hi|Hello|Dear)\s+\w+[,\s]*\n?', '', cleaned, flags=re.IGNORECASE | re.MULTILINE)
+            cleaned = re.sub(r'(Hi|Hello|Dear)\s+\w+[,\s]*\n?', '', cleaned, flags=re.IGNORECASE | re.MULTILINE)
+            cleaned = re.sub(r'Thank\s+you\s+for\s+your\s+email[.,]?\s*\n?', '', cleaned, flags=re.IGNORECASE | re.MULTILINE)
+            cleaned = re.sub(r'Thank\s+you\s+for\s+asking[.,]?\s*\n?', '', cleaned, flags=re.IGNORECASE | re.MULTILINE)
+            cleaned = re.sub(r'Thanks\s+for\s+asking[.,]?\s*\n?', '', cleaned, flags=re.IGNORECASE | re.MULTILINE)
+            cleaned = re.sub(r'Thank\s+you\s+for\s+reaching\s+out[.,]?\s*\n?', '', cleaned, flags=re.IGNORECASE | re.MULTILINE)
+            cleaned = re.sub(r'Thank\s+you\s+for\s+contacting[.,]?\s*\n?', '', cleaned, flags=re.IGNORECASE | re.MULTILINE)
+            cleaned = re.sub(r'Regarding\s+(your\s+question|the)[:\s]*\n?', '', cleaned, flags=re.IGNORECASE | re.MULTILINE)
+            cleaned = re.sub(r'Regarding\s+your\s+question[:\s]*\n?', '', cleaned, flags=re.IGNORECASE | re.MULTILINE)
+            cleaned = re.sub(r'Let\s+me\s+look\s+into\s+(this|that)[.,]?\s*\n?', '', cleaned, flags=re.IGNORECASE | re.MULTILINE)
+            cleaned = re.sub(r'get\s+back\s+to\s+you[.,]?\s*\n?', '', cleaned, flags=re.IGNORECASE | re.MULTILINE)
+            cleaned = re.sub(r'I\s+(have\s+)?received\s+your\s+message[.,]?\s*\n?', '', cleaned, flags=re.IGNORECASE | re.MULTILINE)
+            cleaned = re.sub(r'I\s+have\s+received\s+your\s+message\s+and\s+will\s+respond\s+accordingly[.,]?\s*\n?', '', cleaned, flags=re.IGNORECASE | re.MULTILINE)
+            cleaned = re.sub(r'will\s+respond\s+accordingly[.,]?\s*\n?', '', cleaned, flags=re.IGNORECASE | re.MULTILINE)
+            cleaned = re.sub(r'I\s+see\s+you\s+(reached\s+out|contacted)[.,]?\s*\n?', '', cleaned, flags=re.IGNORECASE | re.MULTILINE)
+            cleaned = re.sub(r'I\s+see\s+you\s+reached\s+out\s+about[.,]?\s*\n?', '', cleaned, flags=re.IGNORECASE | re.MULTILINE)
+            cleaned = re.sub(r'reached\s+out\s+about[.,]?\s*\n?', '', cleaned, flags=re.IGNORECASE | re.MULTILINE)
+            cleaned = re.sub(r'How\s+can\s+I\s+help\s+you\s+today[.,]?\s*\n?', '', cleaned, flags=re.IGNORECASE | re.MULTILINE)
+            cleaned = re.sub(r'How\s+can\s+I\s+help[.,]?\s*\n?', '', cleaned, flags=re.IGNORECASE | re.MULTILINE)
+            # REMOVED: cleaned = re.sub(r'Best\s+regards[.,]?\s*\n?', '', cleaned, flags=re.IGNORECASE | re.MULTILINE)
+            # We want to keep "Best regards," for the signature
+            cleaned = re.sub(r'Sincerely[.,]?\s*\n?', '', cleaned, flags=re.IGNORECASE | re.MULTILINE)
+            cleaned = re.sub(r'Regards[.,]?\s*\n?', '', cleaned, flags=re.IGNORECASE | re.MULTILINE)
+            
+            # Step 3: Remove repeated original email content
+            if original_email_body and original_email_body.strip():
+                original_lower = original_email_body.lower().strip()
+                original_clean = re.sub(r'[^\w\s]', '', original_lower)
+                original_words = original_clean.split()
+                
+                cleaned_lower = cleaned.lower()
+                cleaned_clean = re.sub(r'[^\w\s]', '', cleaned_lower)
+                
+                # Check for word sequences of 3-7 words from original
+                for seq_len in range(7, 2, -1):
+                    for i in range(len(original_words) - seq_len + 1):
+                        sequence = ' '.join(original_words[i:i+seq_len])
+                        if sequence in cleaned_clean:
+                            words_pattern = r'\b' + r'\s+'.join([re.escape(w) for w in original_words[i:i+seq_len]]) + r'\b'
+                            cleaned = re.sub(words_pattern, '', cleaned, flags=re.IGNORECASE)
+                            cleaned_clean = re.sub(re.escape(sequence), '', cleaned_clean, flags=re.IGNORECASE)
+            
+            # Step 4: Final cleanup - normalize whitespace but preserve signature formatting
+            # First, normalize multiple newlines to double newline (for signature separation)
+            cleaned = re.sub(r'\n\s*\n\s*\n+', '\n\n', cleaned)
+            # Normalize spaces within lines (but keep newlines)
+            lines = cleaned.split('\n')
+            normalized_lines = []
+            for line in lines:
+                normalized_line = re.sub(r'[ \t]+', ' ', line.strip())
+                if normalized_line:
+                    normalized_lines.append(normalized_line)
+            cleaned = '\n'.join(normalized_lines)
+            
+            # Remove email addresses from signature (keep name, remove email)
+            # Pattern: email addresses on their own line or at end of line
+            cleaned = re.sub(r'\n\s*[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\s*\n?', '', cleaned)
+            cleaned = re.sub(r'\s+[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\s*$', '', cleaned)
+            
+            cleaned = cleaned.strip()
+            
+            # Step 4.5: Ensure "Best regards," and name are on separate lines
+            # Handle various patterns and normalize to "Best regards,\nName"
+            
+            # Pattern 1: "Best regards, Name" -> "Best regards,\nName"
+            cleaned = re.sub(r'(Best\s+regards,)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)', r'\1\n\2', cleaned, flags=re.IGNORECASE)
+            
+            # Pattern 2: "Best regards Name" (without comma) -> "Best regards,\nName"
+            cleaned = re.sub(r'(Best\s+regards)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)', r'Best regards,\n\2', cleaned, flags=re.IGNORECASE)
+            
+            # Pattern 3: "Best Name" (missing "regards") -> "Best regards,\nName"
+            # This handles cases where AI generates just "Best Name"
+            cleaned = re.sub(r'\bBest\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s*$', r'Best regards,\n\1', cleaned, flags=re.IGNORECASE | re.MULTILINE)
+            
+            # Pattern 4: "Best, Name" -> "Best regards,\nName"
+            cleaned = re.sub(r'\bBest,\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)', r'Best regards,\n\1', cleaned, flags=re.IGNORECASE)
+            
+            # Step 5: If after all cleanup we have nothing meaningful, return a simple acknowledgment
+            if not cleaned or len(cleaned) < 5:
+                if original_email_body and 'passed' in original_email_body.lower() and 'exam' in original_email_body.lower():
+                    return "That's amazing! Congratulations!"
+                return "Thanks for your message!"
+            
+            print(f"✨ CLEANUP OUTPUT (first 300 chars): {cleaned[:300]}")
+            
+            return cleaned
+        except Exception as e:
+            print(f"❌ Cleanup function error: {e}")
+            import traceback
+            traceback.print_exc()
+            return response_text
     
     def analyze_email(self, email_data: Dict) -> Dict:
         """

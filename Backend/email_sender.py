@@ -45,7 +45,9 @@ class EmailSender:
                    cc: Optional[List[str]] = None,
                    bcc: Optional[List[str]] = None,
                    attachments: Optional[List[str]] = None,
-                   html: bool = False) -> bool:
+                   html: bool = False,
+                   in_reply_to: Optional[str] = None,
+                   references: Optional[str] = None) -> bool:
         """
         Send an email via Gmail API (if OAuth) or SMTP
         
@@ -57,16 +59,18 @@ class EmailSender:
             bcc: BCC recipients
             attachments: List of file paths to attach
             html: If True, body is treated as HTML
+            in_reply_to: Message-ID of the email being replied to (for threading)
+            references: Message-ID for References header (for threading)
         
         Returns:
             True if sent successfully, False otherwise
         """
         # Try Gmail API first if OAuth credentials are available
         if self.oauth_credentials and self.gmail_service:
-            return self._send_via_gmail_api(to, subject, body, cc, bcc, attachments, html)
+            return self._send_via_gmail_api(to, subject, body, cc, bcc, attachments, html, in_reply_to, references)
         
         # Fall back to SMTP
-        return self._send_via_smtp(to, subject, body, cc, bcc, attachments, html)
+        return self._send_via_smtp(to, subject, body, cc, bcc, attachments, html, in_reply_to, references)
     
     def _send_via_gmail_api(self,
                            to: str or List[str],
@@ -75,7 +79,9 @@ class EmailSender:
                            cc: Optional[List[str]] = None,
                            bcc: Optional[List[str]] = None,
                            attachments: Optional[List[str]] = None,
-                           html: bool = False) -> bool:
+                           html: bool = False,
+                           in_reply_to: Optional[str] = None,
+                           references: Optional[str] = None) -> bool:
         """Send email via Gmail API"""
         try:
             # Create message
@@ -93,6 +99,12 @@ class EmailSender:
                 msg['Bcc'] = ', '.join(bcc)
             
             msg['Subject'] = subject
+            
+            # Add threading headers for email threading
+            if in_reply_to:
+                msg['In-Reply-To'] = in_reply_to
+            if references:
+                msg['References'] = references
             
             # Add body
             mime_type = 'html' if html else 'plain'
@@ -123,12 +135,12 @@ class EmailSender:
             print(f"✗ Gmail API error sending email: {str(e)}")
             # If Gmail API fails, try SMTP as fallback
             print("⚠️  Falling back to SMTP...")
-            return self._send_via_smtp(to, subject, body, cc, bcc, attachments, html)
+            return self._send_via_smtp(to, subject, body, cc, bcc, attachments, html, in_reply_to, references)
         except Exception as e:
             print(f"✗ Error sending email via Gmail API: {str(e)}")
             # If Gmail API fails, try SMTP as fallback
             print("⚠️  Falling back to SMTP...")
-            return self._send_via_smtp(to, subject, body, cc, bcc, attachments, html)
+            return self._send_via_smtp(to, subject, body, cc, bcc, attachments, html, in_reply_to, references)
     
     def _send_via_smtp(self,
                       to: str or List[str],
@@ -137,7 +149,9 @@ class EmailSender:
                       cc: Optional[List[str]] = None,
                       bcc: Optional[List[str]] = None,
                       attachments: Optional[List[str]] = None,
-                      html: bool = False) -> bool:
+                      html: bool = False,
+                      in_reply_to: Optional[str] = None,
+                      references: Optional[str] = None) -> bool:
         """Send email via SMTP"""
         try:
             if not self.password:
@@ -157,6 +171,12 @@ class EmailSender:
                 msg['Cc'] = ', '.join(cc)
             
             msg['Subject'] = subject
+            
+            # Add threading headers for email threading
+            if in_reply_to:
+                msg['In-Reply-To'] = in_reply_to
+            if references:
+                msg['References'] = references
             
             # Add body
             mime_type = 'html' if html else 'plain'
