@@ -381,18 +381,7 @@ jobs:
             
             echo ""
             echo "Testing MongoDB connection from backend container:"
-            sudo docker exec email-agent-backend-dev python -c "
-import os
-from pymongo import MongoClient
-try:
-    uri = os.getenv('MONGODB_URI', 'mongodb://mongodb:27017/email_agent')
-    print(f'  Connecting to: {uri.split(\"@\")[-1] if \"@\" in uri else uri}')
-    client = MongoClient(uri, serverSelectionTimeoutMS=3000)
-    client.admin.command('ping')
-    print('  ✅ MongoDB connection successful')
-except Exception as e:
-    print(f'  ❌ MongoDB connection failed: {e}')
-" 2>/dev/null || echo "⚠️  Cannot test MongoDB connection"
+            sudo docker exec email-agent-backend-dev python -c 'import os; from pymongo import MongoClient; uri = os.getenv("MONGODB_URI", "mongodb://mongodb:27017/email_agent"); print(f"  Connecting to: {uri.split(\"@\")[-1] if \"@\" in uri else uri}"); client = MongoClient(uri, serverSelectionTimeoutMS=3000); client.admin.command("ping"); print("  ✅ MongoDB connection successful")' 2>/dev/null || echo "⚠️  Cannot test MongoDB connection (container may not be ready yet)"
             
             # Check container status
             echo "📊 Container status:"
