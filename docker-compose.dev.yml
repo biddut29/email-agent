@@ -27,8 +27,8 @@ services:
       - SESSION_SECRET=${SESSION_SECRET}
       - FRONTEND_URL=${FRONTEND_URL}
     env_file:
-      - ./Backend/.env.dev
-      - ./Backend/.env  # Fallback to .env if .env.dev doesn't exist
+      - ./Backend/.env  # Load .env first (primary config)
+      - ./Backend/.env.dev  # Then override with .env.dev if it exists
     depends_on:
       - mongodb
     networks:
