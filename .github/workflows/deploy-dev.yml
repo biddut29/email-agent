@@ -180,12 +180,69 @@ jobs:
             sleep 10
             echo "✅ Frontend recreated with updated API URL"
             
-            # Also create fallback .env files if they don't exist
+            # Create/update .env file (primary config file - loaded first)
+            echo "📝 Creating/updating Backend/.env file (primary config)..."
             if [ ! -f "/opt/email-agent/Backend/.env" ]; then
-              echo "Creating Backend/.env file (fallback)..."
-              touch /opt/email-agent/Backend/.env
-              sudo chown $VM_USER_VAL:$VM_USER_VAL /opt/email-agent/Backend/.env
+              echo "Creating Backend/.env file from template..."
+              if [ -f "/opt/email-agent/Backend/env.dev.template" ]; then
+                cp /opt/email-agent/Backend/env.dev.template /opt/email-agent/Backend/.env
+              else
+                touch /opt/email-agent/Backend/.env
+                echo "MONGODB_URI=mongodb://mongodb:27017/email_agent" >> /opt/email-agent/Backend/.env
+                echo "GOOGLE_REDIRECT_URI=https://emailagent.duckdns.org/api/auth/callback" >> /opt/email-agent/Backend/.env
+                echo "FRONTEND_URL=https://emailagent.duckdns.org" >> /opt/email-agent/Backend/.env
+                echo "CORS_ORIGINS=http://localhost:3000,http://localhost:3001,https://emailagent.duckdns.org" >> /opt/email-agent/Backend/.env
+              fi
             fi
+            
+            # Update .env file with secrets (same as .env.dev)
+            if [ -n "$DEV_AZURE_OPENAI_ENDPOINT" ]; then
+              echo "Updating Backend/.env with Azure OpenAI endpoint..."
+              grep -q "AZURE_OPENAI_ENDPOINT" /opt/email-agent/Backend/.env && \
+                sed -i "s|AZURE_OPENAI_ENDPOINT=.*|AZURE_OPENAI_ENDPOINT=$DEV_AZURE_OPENAI_ENDPOINT|" /opt/email-agent/Backend/.env || \
+                echo "AZURE_OPENAI_ENDPOINT=$DEV_AZURE_OPENAI_ENDPOINT" >> /opt/email-agent/Backend/.env
+            fi
+            if [ -n "$DEV_AZURE_OPENAI_API_KEY" ]; then
+              echo "Updating Backend/.env with Azure OpenAI API key..."
+              grep -q "AZURE_OPENAI_KEY" /opt/email-agent/Backend/.env && \
+                sed -i "s|AZURE_OPENAI_KEY=.*|AZURE_OPENAI_KEY=$DEV_AZURE_OPENAI_API_KEY|" /opt/email-agent/Backend/.env || \
+                echo "AZURE_OPENAI_KEY=$DEV_AZURE_OPENAI_API_KEY" >> /opt/email-agent/Backend/.env
+            fi
+            if [ -n "$DEV_AZURE_OPENAI_DEPLOYMENT_NAME" ]; then
+              echo "Updating Backend/.env with Azure OpenAI deployment name..."
+              grep -q "AZURE_OPENAI_DEPLOYMENT" /opt/email-agent/Backend/.env && \
+                sed -i "s|AZURE_OPENAI_DEPLOYMENT=.*|AZURE_OPENAI_DEPLOYMENT=$DEV_AZURE_OPENAI_DEPLOYMENT_NAME|" /opt/email-agent/Backend/.env || \
+                echo "AZURE_OPENAI_DEPLOYMENT=$DEV_AZURE_OPENAI_DEPLOYMENT_NAME" >> /opt/email-agent/Backend/.env
+            fi
+            if [ -n "$DEV_GOOGLE_CLIENT_ID" ]; then
+              echo "Setting Backend/.env with Google Client ID from secrets..."
+              grep -q "GOOGLE_CLIENT_ID" /opt/email-agent/Backend/.env && \
+                sed -i "s|GOOGLE_CLIENT_ID=.*|GOOGLE_CLIENT_ID=$DEV_GOOGLE_CLIENT_ID|" /opt/email-agent/Backend/.env || \
+                echo "GOOGLE_CLIENT_ID=$DEV_GOOGLE_CLIENT_ID" >> /opt/email-agent/Backend/.env
+            fi
+            if [ -n "$DEV_GOOGLE_CLIENT_SECRET" ]; then
+              echo "Setting Backend/.env with Google Client Secret from secrets..."
+              grep -q "GOOGLE_CLIENT_SECRET" /opt/email-agent/Backend/.env && \
+                sed -i "s|GOOGLE_CLIENT_SECRET=.*|GOOGLE_CLIENT_SECRET=$DEV_GOOGLE_CLIENT_SECRET|" /opt/email-agent/Backend/.env || \
+                echo "GOOGLE_CLIENT_SECRET=$DEV_GOOGLE_CLIENT_SECRET" >> /opt/email-agent/Backend/.env
+            fi
+            if [ -n "$DEV_SESSION_SECRET" ]; then
+              echo "Updating Backend/.env with Session Secret..."
+              grep -q "SESSION_SECRET" /opt/email-agent/Backend/.env && \
+                sed -i "s|SESSION_SECRET=.*|SESSION_SECRET=$DEV_SESSION_SECRET|" /opt/email-agent/Backend/.env || \
+                echo "SESSION_SECRET=$DEV_SESSION_SECRET" >> /opt/email-agent/Backend/.env
+            fi
+            
+            # Ensure production URLs in .env
+            grep -q "FRONTEND_URL" /opt/email-agent/Backend/.env && \
+              sed -i "s|FRONTEND_URL=.*|FRONTEND_URL=https://emailagent.duckdns.org|" /opt/email-agent/Backend/.env || \
+              echo "FRONTEND_URL=https://emailagent.duckdns.org" >> /opt/email-agent/Backend/.env
+            
+            grep -q "GOOGLE_REDIRECT_URI" /opt/email-agent/Backend/.env && \
+              sed -i "s|GOOGLE_REDIRECT_URI=.*|GOOGLE_REDIRECT_URI=https://emailagent.duckdns.org/api/auth/callback|" /opt/email-agent/Backend/.env || \
+              echo "GOOGLE_REDIRECT_URI=https://emailagent.duckdns.org/api/auth/callback" >> /opt/email-agent/Backend/.env
+            
+            sudo chown $VM_USER_VAL:$VM_USER_VAL /opt/email-agent/Backend/.env
             if [ ! -f "/opt/email-agent/Frontend/.env.local" ]; then
               echo "Creating Frontend/.env.local file (fallback)..."
               touch /opt/email-agent/Frontend/.env.local
