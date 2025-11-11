@@ -26,6 +26,7 @@ from vector_store import vector_store
 from mongodb_manager import mongodb_manager
 from gmail_api_client import GmailAPIClient
 from auth_manager import AuthManager
+from config_manager import ConfigManager
 import config
 
 # Initialize account manager with MongoDB (will be set up in startup)
@@ -33,6 +34,9 @@ account_manager = None
 
 # Initialize auth manager
 auth_manager = AuthManager()
+
+# Initialize config manager (will be set up in startup)
+config_manager = None
 
 # Session serializer
 session_serializer = URLSafeTimedSerializer(config.SESSION_SECRET)
@@ -134,10 +138,38 @@ class SemanticSearchRequest(BaseModel):
 # Startup event
 @app.on_event("startup")
 async def startup_event():
-    global email_agent, chat_agent, account_manager
+    global email_agent, chat_agent, account_manager, config_manager
     
     # Initialize account manager with MongoDB
     account_manager = AccountManager(mongodb_manager=mongodb_manager)
+    
+    # Initialize config manager (DO NOT auto-load from .env)
+    try:
+        config_manager = ConfigManager()
+        if config_manager is None:
+            print("⚠️  Config manager could not be initialized - MongoDB may not be connected")
+        elif config_manager.config_collection is None:
+            print("❌ ERROR: MongoDB is not connected or database is not accessible.")
+            print("   Please ensure MongoDB is running and MONGODB_URI is correct.")
+        elif not config_manager.collection_exists():
+            print("❌ ERROR: Configuration collection 'app_config' does not exist in database.")
+            print("   Please use the admin panel to initialize configuration:")
+            print("   1. Go to http://localhost:3000/admin")
+            print("   2. Click 'Load from .env' button to initialize configuration")
+            print("   3. Or manually configure settings in the Application Configuration section")
+        else:
+            # Collection exists - check if it has any config
+            try:
+                config_count = config_manager.config_collection.count_documents({})
+                if config_count == 0:
+                    print("⚠️  Configuration collection exists but is empty. You can configure via admin panel.")
+                else:
+                    print(f"✓ Configuration loaded from database ({config_count} settings)")
+            except Exception as e:
+                print(f"⚠️  Could not check configuration count: {e}")
+    except Exception as e:
+        print(f"⚠️  Could not initialize config manager: {e}")
+        config_manager = None
     
     # Add default account from config if not exists, or ensure it's active
     if config.EMAIL_ADDRESS and config.EMAIL_PASSWORD:
@@ -181,12 +213,14 @@ async def startup_event():
             account_email=active_account['email']
         )
     
-    # Check if auto-reply is enabled via environment variable
-    auto_reply_enabled = os.getenv("AUTO_REPLY_ENABLED", "true").lower() == "true"
+    # Read auto-reply enabled and AI provider from database (not from module-level variables set at import time)
+    auto_reply_enabled_str = config.get_config_value("auto_reply_enabled", "AUTO_REPLY_ENABLED", "true")
+    auto_reply_enabled = auto_reply_enabled_str.lower() == "true" if isinstance(auto_reply_enabled_str, str) else bool(auto_reply_enabled_str)
+    ai_provider = config.get_config_value("ai_provider", "AI_PROVIDER", "azure")
     
     email_agent = EmailAgent(
         ai_enabled=True, 
-        ai_provider="azure",
+        ai_provider=ai_provider,
         account_manager=account_manager,
         mongodb_manager=mongodb_manager,
         notification_callback=broadcast_notification,
@@ -1281,21 +1315,26 @@ async def delete_account(account_id: int):
 
 
 @app.put("/api/accounts/{account_id}/activate")
-async def activate_account(account_id: int):
-    """Set an account as active"""
+async def activate_account(account_id: int, toggle: bool = True):
+    """Set an account as active (toggle mode by default - allows multiple active accounts)"""
     try:
-        result = account_manager.set_active_account(account_id)
+        result = account_manager.set_active_account(account_id, toggle=toggle)
         
         if 'error' in result:
             raise HTTPException(status_code=404, detail=result['error'])
         
-        # Switch vector store to the new account
-        active_account = account_manager.get_active_account()
-        if active_account:
-            vector_store.set_account(
-                account_id=active_account['id'],
-                account_email=active_account['email']
-            )
+        # If account was activated, switch vector store to it (only if it's the first active)
+        if result.get('is_active'):
+            active_account = account_manager.get_account(account_id)
+            if active_account:
+                # Only switch vector store if this is the first active account
+                active_accounts = account_manager.get_all_accounts()
+                active_count = sum(1 for acc in active_accounts if acc.get('is_active'))
+                if active_count == 1:  # First active account
+                    vector_store.set_account(
+                        account_id=active_account['id'],
+                        account_email=active_account['email']
+                    )
         
         # Disconnect current connection to force reconnect with new account
         if email_agent and email_agent.receiver:
@@ -1344,6 +1383,119 @@ async def get_active_account():
             "success": True,
             "account": account_safe
         }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Configuration Management Endpoints
+
+class ConfigRequest(BaseModel):
+    azure_openai_key: str
+    azure_openai_endpoint: str
+    azure_openai_deployment: str
+    azure_openai_api_version: str
+    ai_provider: str
+    mongodb_uri: str
+    mongodb_db_name: str
+    google_client_id: str
+    google_client_secret: str
+    google_redirect_uri: str
+    session_secret: str
+    frontend_url: str
+    cors_origins: str
+    auto_reply_enabled: bool
+
+
+@app.get("/api/config")
+async def get_config():
+    """Get current application configuration from database"""
+    try:
+        if not config_manager:
+            raise HTTPException(status_code=500, detail="Config manager not initialized")
+        
+        config_data = config_manager.get_all_config()
+        return {
+            "success": True,
+            "config": {
+                "azure_openai_key": config_data.get("azure_openai_key", ""),
+                "azure_openai_endpoint": config_data.get("azure_openai_endpoint", ""),
+                "azure_openai_deployment": config_data.get("azure_openai_deployment", "gpt-4.1-mini"),
+                "azure_openai_api_version": config_data.get("azure_openai_api_version", "2024-12-01-preview"),
+                "ai_provider": config_data.get("ai_provider", "azure"),
+                "mongodb_uri": config_data.get("mongodb_uri", "mongodb://localhost:27017/"),
+                "mongodb_db_name": config_data.get("mongodb_db_name", "email_agent"),
+                "google_client_id": config_data.get("google_client_id", ""),
+                "google_client_secret": config_data.get("google_client_secret", ""),
+                "google_redirect_uri": config_data.get("google_redirect_uri", "http://localhost:8000/api/auth/callback"),
+                "session_secret": config_data.get("session_secret", ""),
+                "frontend_url": config_data.get("frontend_url", "http://localhost:3000"),
+                "cors_origins": config_data.get("cors_origins", "http://localhost:3000,http://127.0.0.1:3000"),
+                "auto_reply_enabled": config_data.get("auto_reply_enabled", "true").lower() == "true"
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/config")
+async def save_config(request: ConfigRequest):
+    """Save application configuration to database"""
+    try:
+        if not config_manager:
+            raise HTTPException(status_code=500, detail="Config manager not initialized")
+        
+        config_dict = {
+            "azure_openai_key": request.azure_openai_key,
+            "azure_openai_endpoint": request.azure_openai_endpoint,
+            "azure_openai_deployment": request.azure_openai_deployment,
+            "azure_openai_api_version": request.azure_openai_api_version,
+            "ai_provider": request.ai_provider,
+            "mongodb_uri": request.mongodb_uri,
+            "mongodb_db_name": request.mongodb_db_name,
+            "google_client_id": request.google_client_id,
+            "google_client_secret": request.google_client_secret,
+            "google_redirect_uri": request.google_redirect_uri,
+            "session_secret": request.session_secret,
+            "frontend_url": request.frontend_url,
+            "cors_origins": request.cors_origins,
+            "auto_reply_enabled": "true" if request.auto_reply_enabled else "false"
+        }
+        
+        success = config_manager.save_config(config_dict)
+        
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to save configuration")
+        
+        return {
+            "success": True,
+            "message": "Configuration saved successfully. Please restart the backend for changes to take effect."
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/config/init-from-env")
+async def init_config_from_env():
+    """Initialize database with current .env values (overwrites existing)"""
+    try:
+        if not config_manager:
+            raise HTTPException(status_code=500, detail="Config manager not initialized")
+        
+        # Force overwrite to always load from .env when explicitly called
+        success = config_manager.initialize_from_env(force_overwrite=True)
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to initialize configuration")
+        
+        return {
+            "success": True,
+            "message": "Configuration initialized from .env to database"
+        }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

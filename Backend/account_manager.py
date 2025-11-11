@@ -245,28 +245,45 @@ class AccountManager:
             print(f"Error getting account count: {e}")
             return 0
     
-    def set_active_account(self, account_id: int) -> Dict:
-        """Set an account as active by integer ID"""
+    def set_active_account(self, account_id: int, toggle: bool = False) -> Dict:
+        """Set an account as active by integer ID
+        
+        Args:
+            account_id: Account ID to activate
+            toggle: If True, toggle the account's active status without deactivating others.
+                    If False (default), deactivate all others first (original behavior).
+        """
         if self.accounts_collection is None:
             return {"error": "MongoDB not available"}
         
         try:
-            # First, deactivate all accounts
-            self.accounts_collection.update_many({}, {"$set": {"is_active": False}})
+            if not toggle:
+                # Original behavior: First, deactivate all accounts
+                self.accounts_collection.update_many({}, {"$set": {"is_active": False}})
             
-            # Then activate the selected account
+            # Get current status
+            account = self.accounts_collection.find_one({"id": account_id})
+            if not account:
+                return {"error": "Account not found"}
+            
+            # Toggle or set active
+            new_status = not account.get('is_active', False) if toggle else True
+            
+            # Update the account
             result = self.accounts_collection.update_one(
                 {"id": account_id},
-                {"$set": {"is_active": True}}
+                {"$set": {"is_active": new_status}}
             )
             
             if result.modified_count > 0:
-                self.active_account_id = account_id
+                if new_status:
+                    self.active_account_id = account_id
                 account = self.get_account(account_id)
                 if account:
-                    print(f"✓ Active account set to: {account['email']}")
-                    return {"success": True, "account": account}
-                return {"error": "Account not found after activation"}
+                    status_text = "activated" if new_status else "deactivated"
+                    print(f"✓ Account {status_text}: {account['email']}")
+                    return {"success": True, "account": account, "is_active": new_status}
+                return {"error": "Account not found after update"}
             else:
                 return {"error": "Account not found"}
                 
