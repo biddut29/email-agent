@@ -16,16 +16,7 @@ services:
       - ./Backend:/app
       - ./Backend/chroma_db:/app/chroma_db
       - backend_venv:/app/venv  # Preserve venv between restarts
-    environment:
-      - MONGODB_URI=mongodb://mongodb:27017/email_agent
-      - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT}
-      - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY}
-      - AZURE_OPENAI_DEPLOYMENT_NAME=${AZURE_OPENAI_DEPLOYMENT_NAME}
-      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
-      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
-      - GOOGLE_REDIRECT_URI=${GOOGLE_REDIRECT_URI}
-      - SESSION_SECRET=${SESSION_SECRET}
-      - FRONTEND_URL=${FRONTEND_URL}
+    # Load environment variables from .env files (env_file takes precedence)
     env_file:
       - ./Backend/.env  # Load .env first (primary config)
       - ./Backend/.env.dev  # Then override with .env.dev if it exists
