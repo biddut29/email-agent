@@ -329,15 +329,29 @@ jobs:
             echo "⏳ Waiting for services to start..."
             sleep 15
             
-            # Recreate backend to pick up OAuth credentials if they were set
+            # Recreate backend to pick up .env file changes
             # Note: docker-compose restart doesn't reload env_file, so we need to recreate
-            if [ -n "$DEV_GOOGLE_CLIENT_ID" ] && [ -n "$DEV_GOOGLE_CLIENT_SECRET" ]; then
-              echo "🔄 Recreating backend container to load OAuth credentials..."
-              sudo docker-compose -f docker-compose.dev.yml up -d --force-recreate --no-deps backend || true
-              echo "⏳ Waiting for backend to start..."
-              sleep 10
-              echo "✅ Backend recreated with OAuth credentials"
+            echo "🔄 Recreating backend container to load .env configuration..."
+            sudo docker-compose -f docker-compose.dev.yml up -d --force-recreate --no-deps backend || true
+            echo "⏳ Waiting for backend to start..."
+            sleep 10
+            echo "✅ Backend recreated with .env configuration"
+            
+            # Verify configuration is loaded
+            echo ""
+            echo "🔍 Verifying configuration..."
+            echo "Checking if .env file exists:"
+            if [ -f "/opt/email-agent/Backend/.env" ]; then
+              echo "✅ Backend/.env exists ($(ls -lh /opt/email-agent/Backend/.env | awk '{print $5}'))"
+              echo "   Sample config values (first 3 non-empty lines):"
+              grep -v "^#" /opt/email-agent/Backend/.env | grep -v "^$" | grep "=" | head -3 | sed 's/=.*/=***/' | sed 's/^/     /'
+            else
+              echo "❌ Backend/.env does NOT exist!"
             fi
+            
+            echo ""
+            echo "Checking backend container environment:"
+            sudo docker exec email-agent-backend-dev env 2>/dev/null | grep -E "AZURE_OPENAI_KEY|GOOGLE_CLIENT_ID|MONGODB_URI" | head -3 | sed 's/=.*/=***/' || echo "⚠️  Cannot check container environment"
             
             # Check container status
             echo "📊 Container status:"

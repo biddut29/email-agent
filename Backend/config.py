@@ -6,10 +6,10 @@ Loads settings from .env files
 import os
 from dotenv import load_dotenv
 
-# Load .env files (in order of precedence: .env.dev overrides .env)
-load_dotenv('.env', override=False)  # Load .env first
-load_dotenv('.env.dev', override=True)  # Override with .env.dev if exists
-load_dotenv()  # Also load from environment variables
+# Load .env files (in order of precedence: .env is primary, .env.dev is override)
+load_dotenv('.env.dev', override=False)  # Load .env.dev first (if exists)
+load_dotenv('.env', override=True)  # Then load .env and override .env.dev (primary config)
+load_dotenv()  # Also load from environment variables (highest priority)
 
 # Email Credentials
 EMAIL_ADDRESS = os.getenv("EMAIL_ADDRESS", "bidduttest@gmail.com")
