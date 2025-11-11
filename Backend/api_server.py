@@ -158,15 +158,16 @@ async def startup_event():
             print("   2. Click 'Load from .env' button to initialize configuration")
             print("   3. Or manually configure settings in the Application Configuration section")
         else:
-            # Collection exists - check if it has any config
+            # Collection exists - skip count check for faster startup
+            # Just verify it's accessible by trying to read one config
             try:
-                config_count = config_manager.config_collection.count_documents({})
-                if config_count == 0:
-                    print("⚠️  Configuration collection exists but is empty. You can configure via admin panel.")
+                test_config = config_manager.get_config("ai_provider", "")
+                if test_config:
+                    print(f"✓ Configuration loaded from database")
                 else:
-                    print(f"✓ Configuration loaded from database ({config_count} settings)")
+                    print("⚠️  Configuration collection exists but is empty. You can configure via admin panel.")
             except Exception as e:
-                print(f"⚠️  Could not check configuration count: {e}")
+                print(f"⚠️  Could not verify configuration: {e}")
     except Exception as e:
         print(f"⚠️  Could not initialize config manager: {e}")
         config_manager = None
@@ -205,12 +206,13 @@ async def startup_event():
             else:
                 print(f"✓ Added account from .env: {config.EMAIL_ADDRESS}")
     
-    # Set vector store to active account
+    # Set vector store to active account (skip count for faster startup)
     active_account = account_manager.get_active_account()
     if active_account:
         vector_store.set_account(
             account_id=active_account['id'],
-            account_email=active_account['email']
+            account_email=active_account['email'],
+            skip_count=True  # Skip expensive count on startup
         )
     
     # Read auto-reply enabled and AI provider from database (not from module-level variables set at import time)
@@ -576,12 +578,110 @@ async def get_emails(
                 "error": "No active email account. Please add an account first."
             }
         
+        # Check if account has password (required for IMAP) or OAuth credentials (for Gmail API)
+        if 'password' not in active_account or not active_account.get('password'):
+            # Check if account has OAuth credentials - use Gmail API
+            if 'oauth_credentials' in active_account and active_account.get('oauth_credentials'):
+                try:
+                    from auth_manager import AuthManager
+                    from google.oauth2.credentials import Credentials
+                    from googleapiclient.discovery import build
+                    from google.auth.transport.requests import Request
+                    from gmail_api_client import GmailAPIClient
+                    from datetime import datetime
+                    
+                    # Convert OAuth credentials dict to Credentials object
+                    auth_mgr = AuthManager()
+                    creds = auth_mgr.dict_to_credentials(active_account['oauth_credentials'])
+                    
+                    # Refresh if expired
+                    if creds.expired and creds.refresh_token:
+                        try:
+                            creds.refresh(Request())
+                            # Update stored credentials
+                            updated_creds_dict = auth_mgr.credentials_to_dict(creds)
+                            account_manager.update_account_oauth_credentials(active_account['id'], updated_creds_dict)
+                        except Exception as refresh_e:
+                            print(f"⚠ Failed to refresh OAuth token: {refresh_e}")
+                            return {
+                                "success": False,
+                                "count": 0,
+                                "emails": [],
+                                "error": f"OAuth token expired and refresh failed: {str(refresh_e)}"
+                            }
+                    
+                    # Build Gmail service
+                    gmail_service = build('gmail', 'v1', credentials=creds)
+                    
+                    # Create Gmail client
+                    gmail_client = GmailAPIClient(active_account['email'])
+                    gmail_client.service = gmail_service
+                    gmail_client.creds = creds
+                    
+                    # Build Gmail search query
+                    query_parts = ['in:inbox']  # Always search inbox
+                    if unread_only:
+                        query_parts.append('is:unread')
+                    if date_from:
+                        # Gmail date format: after:YYYY/MM/DD
+                        date_obj = datetime.strptime(date_from, "%Y-%m-%d")
+                        query_parts.append(f"after:{date_obj.strftime('%Y/%m/%d')}")
+                    if date_to:
+                        # Gmail date format: before:YYYY/MM/DD (add 1 day to include the end date)
+                        date_obj = datetime.strptime(date_to, "%Y-%m-%d")
+                        from datetime import timedelta
+                        date_obj = date_obj + timedelta(days=1)  # Include the end date
+                        query_parts.append(f"before:{date_obj.strftime('%Y/%m/%d')}")
+                    
+                    gmail_query = ' '.join(query_parts)
+                    
+                    # Fetch emails via Gmail API
+                    emails = gmail_client.get_emails(limit=limit, query=gmail_query)
+                    
+                    # Save emails to MongoDB
+                    mongo_result = {"saved": 0}
+                    if emails and mongodb_manager.emails_collection is not None:
+                        mongo_result = mongodb_manager.save_emails(emails, active_account['id'])
+                        print(f"✓ Saved {mongo_result.get('total', 0)} emails to MongoDB via Gmail API (Inserted: {mongo_result.get('inserted', 0)}, Updated: {mongo_result.get('updated', 0)})")
+                    
+                    return {
+                        "success": True,
+                        "count": len(emails),
+                        "emails": emails,
+                        "account": active_account['email'],
+                        "mongo_saved": mongo_result.get('total', 0),
+                        "method": "gmail_api",
+                        "date_range": {
+                            "from": date_from,
+                            "to": date_to
+                        } if (date_from or date_to) else None
+                    }
+                    
+                except Exception as gmail_error:
+                    print(f"❌ Error fetching emails via Gmail API: {gmail_error}")
+                    import traceback
+                    traceback.print_exc()
+                    return {
+                        "success": False,
+                        "count": 0,
+                        "emails": [],
+                        "error": f"Failed to fetch emails via Gmail API: {str(gmail_error)}"
+                    }
+            else:
+                return {
+                    "success": False,
+                    "count": 0,
+                    "emails": [],
+                    "error": "Account password is missing. Please update the account with an App Password to enable IMAP access."
+                }
+        
+        # Use IMAP for accounts with password
         # Update receiver with active account credentials
         receiver = email_agent.receiver
         receiver.email_address = active_account['email']
         receiver.password = active_account['password']
-        receiver.imap_server = active_account['imap_server']
-        receiver.imap_port = active_account['imap_port']
+        receiver.imap_server = active_account.get('imap_server', 'imap.gmail.com')
+        receiver.imap_port = active_account.get('imap_port', 993)
         
         # Ensure connection is established
         if not receiver.mail:
@@ -621,6 +721,7 @@ async def get_emails(
             "emails": emails,
             "account": active_account['email'],
             "mongo_saved": mongo_result.get('total', 0),
+            "method": "imap",
             "date_range": {
                 "from": date_from,
                 "to": date_to
@@ -832,9 +933,12 @@ async def reply_from_mongodb(message_id: str, reply_body: str):
             raise HTTPException(status_code=400, detail="No active account")
         
         # Fetch email from MongoDB (with full body - no projection to exclude bodies)
+        # Handle both actual Message-ID and synthetic Gmail ID formats
         email_doc = mongodb_manager.emails_collection.find_one({
-            "message_id": message_id,
-            "account_id": active_account['id']
+            "$or": [
+                {"message_id": message_id, "account_id": active_account['id']},
+                {"gmail_synthetic_id": message_id, "account_id": active_account['id']}
+            ]
         }, {'_id': 0})  # Explicitly include all fields including text_body and html_body
         
         if not email_doc:
@@ -880,6 +984,41 @@ async def reply_from_mongodb(message_id: str, reply_body: str):
         
         # Send reply using the sender with original email included
         sender = email_agent.sender
+        
+        # Update sender with active account credentials
+        sender.email_address = active_account['email']
+        sender.password = active_account.get('password', '')
+        sender.smtp_server = active_account.get('smtp_server', 'smtp.gmail.com')
+        sender.smtp_port = active_account.get('smtp_port', 587)
+        
+        # Set OAuth credentials if available
+        if 'oauth_credentials' in active_account and active_account.get('oauth_credentials'):
+            try:
+                from auth_manager import AuthManager
+                from google.auth.transport.requests import Request
+                auth_mgr = AuthManager()
+                creds = auth_mgr.dict_to_credentials(active_account['oauth_credentials'])
+                
+                # Refresh if expired
+                if creds.expired and creds.refresh_token:
+                    try:
+                        creds.refresh(Request())
+                        # Update stored credentials
+                        updated_creds_dict = auth_mgr.credentials_to_dict(creds)
+                        account_manager.update_account_oauth_credentials(active_account['id'], updated_creds_dict)
+                    except Exception as refresh_e:
+                        print(f"⚠ Failed to refresh OAuth token: {refresh_e}")
+                
+                sender.set_oauth_credentials(active_account['oauth_credentials'])
+            except Exception as oauth_error:
+                print(f"⚠ Failed to set OAuth credentials: {oauth_error}")
+                sender.oauth_credentials = None
+                sender.gmail_service = None
+        else:
+            # Clear OAuth if not available
+            sender.oauth_credentials = None
+            sender.gmail_service = None
+        
         # Convert MongoDB document to email dict format for reply_to_email
         original_subject = email_doc.get('subject', 'No Subject')
         original_email_dict = {
@@ -896,12 +1035,136 @@ async def reply_from_mongodb(message_id: str, reply_body: str):
         else:
             reply_subject = original_subject
         
-        success = sender.reply_to_email(
-            original_email=original_email_dict,
-            body=reply_body,
-            html=False,
-            include_original=True
-        )
+        # Use send_email with threading headers for proper email threading
+        # Extract the original message_id for threading
+        original_message_id = email_doc.get('message_id', '')
+        
+        # Normalize message_id format - ensure it has angle brackets for proper threading
+        if original_message_id:
+            # Remove any existing angle brackets and whitespace
+            clean_msg_id = original_message_id.strip('<>').strip()
+            if clean_msg_id:
+                # Ensure proper Message-ID format: <id@domain>
+                if not clean_msg_id.startswith('<'):
+                    normalized_message_id = f"<{clean_msg_id}>"
+                else:
+                    normalized_message_id = clean_msg_id
+            else:
+                normalized_message_id = None
+        else:
+            normalized_message_id = None
+        
+        # Get thread_id if available (for Gmail API threading)
+        thread_id = email_doc.get('thread_id', '')
+        gmail_id = email_doc.get('gmail_id', '')
+        
+        print(f"🔍 Email document fields: thread_id={thread_id if thread_id else 'MISSING'}, gmail_id={gmail_id if gmail_id else 'MISSING'}")
+        
+        # Build reply body with original email included
+        reply_body_with_original = f"""{reply_body}
+
+---------- Original Message ----------
+From: {email_doc.get('from', '')}
+Date: {email_doc.get('date', '')}
+Subject: {original_subject}
+
+{text_body or html_body or '(No body content)'}
+"""
+        
+        # Check if sender is properly configured
+        sender_email = sender.email_address
+        has_oauth = sender.oauth_credentials is not None and sender.gmail_service is not None
+        has_password = sender.password is not None and sender.password.strip() != ''
+        
+        if not has_oauth and not has_password:
+            raise HTTPException(
+                status_code=500, 
+                detail="Email sender not configured. Please configure OAuth credentials or SMTP password in account settings."
+            )
+        
+        print(f"📤 Sending reply from {sender_email} to {email_doc.get('from', '')}")
+        print(f"   Method: {'Gmail API' if has_oauth else 'SMTP'}")
+        print(f"   Subject: {reply_subject}")
+        print(f"   Threading: message_id={normalized_message_id}, thread_id={thread_id if thread_id else 'N/A'}")
+        
+        # For Gmail API, always try to use threadId (more reliable than headers alone)
+        if has_oauth:
+            # Try to get threadId from Gmail API if not in document
+            if not thread_id:
+                # First, try using gmail_id if available (faster)
+                if gmail_id:
+                    try:
+                        msg = sender.gmail_service.users().messages().get(
+                            userId='me',
+                            id=gmail_id,
+                            format='metadata'
+                        ).execute()
+                        thread_id = msg.get('threadId', '')
+                        if thread_id:
+                            print(f"📎 Retrieved threadId from Gmail API using gmail_id: {thread_id}")
+                            # Update MongoDB with thread_id for future use
+                            mongodb_manager.emails_collection.update_one(
+                                {"message_id": message_id, "account_id": active_account['id']},
+                                {"$set": {"thread_id": thread_id}}
+                            )
+                    except Exception as e:
+                        print(f"⚠️  Could not retrieve threadId using gmail_id: {e}")
+                        gmail_id = None
+                
+                # Fallback: search by subject and from address if gmail_id not available
+                if not thread_id and normalized_message_id:
+                    try:
+                        subject = email_doc.get('subject', '').replace('Re: ', '').replace('RE: ', '').strip()
+                        from_addr = email_doc.get('from', '').split('<')[0].strip() if '<' in email_doc.get('from', '') else email_doc.get('from', '')
+                        if subject and from_addr:
+                            # Search for the message by subject and from
+                            query = f'subject:"{subject[:50]}" from:{from_addr}'
+                            gmail_messages = sender.gmail_service.users().messages().list(
+                                userId='me',
+                                q=query,
+                                maxResults=5
+                            ).execute()
+                            
+                            if gmail_messages.get('messages'):
+                                # Get the most recent matching message
+                                for msg_item in gmail_messages['messages']:
+                                    msg = sender.gmail_service.users().messages().get(
+                                        userId='me',
+                                        id=msg_item['id'],
+                                        format='metadata'
+                                    ).execute()
+                                    thread_id = msg.get('threadId', '')
+                                    if thread_id:
+                                        print(f"📎 Retrieved threadId from Gmail API using search: {thread_id}")
+                                        # Update MongoDB with thread_id and gmail_id for future use
+                                        mongodb_manager.emails_collection.update_one(
+                                            {"message_id": message_id, "account_id": active_account['id']},
+                                            {"$set": {"thread_id": thread_id, "gmail_id": msg_item['id']}}
+                                        )
+                                        break
+                    except Exception as e:
+                        print(f"⚠️  Could not retrieve threadId from Gmail API via search: {e}")
+            
+            # Gmail API - always use threadId if available (more reliable)
+            success = sender.send_email(
+                to=email_doc.get('from', ''),
+                subject=reply_subject,
+                body=reply_body_with_original,
+                html=False,
+                in_reply_to=normalized_message_id if normalized_message_id else None,
+                references=normalized_message_id if normalized_message_id else None,
+                thread_id=thread_id if thread_id else None  # Gmail API threading
+            )
+        else:
+            # SMTP - use headers only (threadId not supported)
+            success = sender.send_email(
+                to=email_doc.get('from', ''),
+                subject=reply_subject,
+                body=reply_body_with_original,
+                html=False,
+                in_reply_to=normalized_message_id if normalized_message_id else None,
+                references=normalized_message_id if normalized_message_id else None
+            )
         
         if success:
             # Save reply to MongoDB
@@ -917,6 +1180,8 @@ async def reply_from_mongodb(message_id: str, reply_body: str):
                 reply_data
             )
             
+            print(f"✓ Reply sent successfully to {email_doc.get('from', '')}")
+            
             return {
                 "success": True,
                 "message": "Reply sent successfully",
@@ -924,7 +1189,9 @@ async def reply_from_mongodb(message_id: str, reply_body: str):
                 "subject": reply_subject
             }
         else:
-            raise HTTPException(status_code=500, detail="Failed to send reply")
+            error_msg = f"Failed to send reply. Sender configured: OAuth={has_oauth}, SMTP={has_password}. Check backend logs for details."
+            print(f"❌ {error_msg}")
+            raise HTTPException(status_code=500, detail=error_msg)
     
     except HTTPException:
         raise
@@ -989,15 +1256,49 @@ async def analyze_email(request: AIAnalysisRequest):
 @app.post("/api/emails/generate-response")
 async def generate_response(
     email_id: str,
-    tone: str = "professional"
+    tone: str = "professional",
+    message_id: Optional[str] = None  # Optional: use message_id for MongoDB emails
 ):
     """Generate an AI response for an email"""
     try:
         if not email_agent or not email_agent.ai_agent:
             raise HTTPException(status_code=400, detail="AI features not enabled")
         
-        receiver = email_agent.receiver
-        email_data = receiver._fetch_email(email_id.encode())
+        email_data = None
+        
+        # If message_id is provided, fetch from MongoDB (for emails loaded via Gmail API or MongoDB)
+        if message_id:
+            if not mongodb_manager or mongodb_manager.emails_collection is None:
+                raise HTTPException(status_code=500, detail="MongoDB not connected")
+            
+            active_account = account_manager.get_active_account()
+            if not active_account:
+                raise HTTPException(status_code=400, detail="No active account")
+            
+            # Fetch email from MongoDB (handle both message_id formats)
+            email_doc = mongodb_manager.emails_collection.find_one({
+                "$or": [
+                    {"message_id": message_id, "account_id": active_account['id']},
+                    {"gmail_synthetic_id": message_id, "account_id": active_account['id']}
+                ]
+            }, {'_id': 0})
+            
+            if email_doc:
+                # Convert MongoDB document to email dict format
+                email_data = {
+                    'subject': email_doc.get('subject', ''),
+                    'from': email_doc.get('from', ''),
+                    'to': email_doc.get('to', ''),
+                    'text_body': email_doc.get('text_body', ''),
+                    'html_body': email_doc.get('html_body', ''),
+                    'date': email_doc.get('date', ''),
+                    'message_id': email_doc.get('message_id', '')
+                }
+        
+        # If not found in MongoDB or message_id not provided, try IMAP
+        if not email_data:
+            receiver = email_agent.receiver
+            email_data = receiver._fetch_email(email_id.encode())
         
         if not email_data:
             raise HTTPException(status_code=404, detail="Email not found")

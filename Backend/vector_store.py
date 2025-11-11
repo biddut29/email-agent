@@ -42,19 +42,21 @@ class EmailVectorStore:
             self.current_account_id = None
             
             print(f"✓ Vector Store initialized (ChromaDB persistent: {self.persist_dir})")
-            print(f"  Total emails indexed: {self.collection.count()}")
+            # Skip counting on startup - can be slow with many emails
+            # Count will be shown when account is set
         except Exception as e:
             print(f"⚠ Vector Store initialization failed: {e}")
             self.client = None
             self.collection = None
     
-    def set_account(self, account_id: int, account_email: str = None) -> Dict:
+    def set_account(self, account_id: int, account_email: str = None, skip_count: bool = False) -> Dict:
         """
         Set the active account for filtering
         
         Args:
             account_id: Account ID to switch to
             account_email: Optional email for logging
+            skip_count: If True, skip counting emails (faster startup)
             
         Returns:
             Dict with success status and message
@@ -62,21 +64,27 @@ class EmailVectorStore:
         try:
             self.current_account_id = account_id
             
-            # Count emails for this account
+            # Count emails for this account (skip on startup for speed)
             email_count = 0
-            if self.collection:
+            if self.collection and not skip_count:
                 try:
-                    # Query with account filter to get count
+                    # Quick count - just get a small sample to check if any exist
                     results = self.collection.get(
                         where={"account_id": str(account_id)},
-                        limit=10000  # Get all for counting
+                        limit=1  # Just check if any exist, don't count all
                     )
                     email_count = len(results['ids']) if results.get('ids') else 0
+                    if email_count > 0:
+                        email_count = "some"  # Don't do expensive full count
                 except:
                     email_count = 0
             
             email_info = f" ({account_email})" if account_email else ""
-            print(f"✓ Vector Store switched to account {account_id}{email_info} - {email_count} emails indexed")
+            if skip_count:
+                print(f"✓ Vector Store switched to account {account_id}{email_info}")
+            else:
+                count_str = f"{email_count} emails indexed" if email_count != "some" else "emails indexed"
+                print(f"✓ Vector Store switched to account {account_id}{email_info} - {count_str}")
             
             return {
                 "success": True,
