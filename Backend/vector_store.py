@@ -449,6 +449,31 @@ class EmailVectorStore:
             }
         except Exception as e:
             return {"error": str(e)}
+    
+    def clear_account_emails(self, account_id: int) -> Dict:
+        """Clear all emails for a specific account from vector store"""
+        if not self.collection:
+            return {"error": "Vector store not initialized"}
+        
+        try:
+            results = self.collection.get(
+                where={"account_id": str(account_id)},
+                limit=10000
+            )
+            
+            if results.get('ids') and len(results['ids']) > 0:
+                self.collection.delete(ids=results['ids'])
+                return {
+                    "success": True,
+                    "deleted": len(results['ids'])
+                }
+            else:
+                return {
+                    "success": True,
+                    "deleted": 0
+                }
+        except Exception as e:
+            return {"error": str(e)}
 
 
 # Global instance

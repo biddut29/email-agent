@@ -2,13 +2,21 @@ import imaplib
 import email
 from email.header import decode_header
 import os
+from dotenv import load_dotenv
 
-# Email credentials
-EMAIL = "bidduttest@gmail.com"
-APP_PASSWORD = "lvvftahuyrbldpcd"  # App password without spaces
+# Load environment variables
+load_dotenv()
+
+# Email credentials from environment variables
+EMAIL = os.getenv("EMAIL_ADDRESS", "")
+APP_PASSWORD = os.getenv("EMAIL_PASSWORD", "")
 
 def connect_to_gmail():
     """Connect to Gmail using IMAP"""
+    if not EMAIL or not APP_PASSWORD:
+        print("✗ Error: EMAIL_ADDRESS and EMAIL_PASSWORD must be set in environment variables")
+        return None
+    
     try:
         # Connect to Gmail's IMAP server
         mail = imaplib.IMAP4_SSL("imap.gmail.com")

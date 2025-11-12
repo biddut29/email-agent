@@ -85,7 +85,7 @@ class EmailAgentAPI {
       if (error instanceof TypeError && error.message === 'Failed to fetch') {
         throw new Error(
           `Cannot connect to backend at ${this.baseUrl}. ` +
-          `Please ensure the backend server is running on port 8000. ` +
+          `Please ensure the backend server is running. ` +
           `Error: ${error.message}`
         );
       }

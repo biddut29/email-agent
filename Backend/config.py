@@ -12,7 +12,7 @@ load_dotenv('.env', override=True)  # Then load .env and override .env.dev (prim
 load_dotenv()  # Also load from environment variables (highest priority)
 
 # Email Credentials
-EMAIL_ADDRESS = os.getenv("EMAIL_ADDRESS", "bidduttest@gmail.com")
+EMAIL_ADDRESS = os.getenv("EMAIL_ADDRESS", "")
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD", "")
 
 # IMAP Settings (for receiving emails)
@@ -99,7 +99,6 @@ CORS_ORIGINS_STR = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0
 CORS_ORIGINS = [origin.strip() for origin in CORS_ORIGINS_STR.split(",") if origin.strip()] if CORS_ORIGINS_STR else [
     "http://localhost:3000",
     "http://localhost:3001",
-    "https://emailagent.duckdns.org",
 ]
 # Filter out empty strings
 CORS_ORIGINS = [origin.strip() for origin in CORS_ORIGINS if origin.strip()]
