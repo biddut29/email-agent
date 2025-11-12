@@ -423,7 +423,7 @@ export default function EmailDashboard() {
             <Search className="w-4 h-4" />
             Search
           </TabsTrigger>
-          <TabsTrigger value="stats" className="flex items-center gap-2">
+          <TabsTrigger value="stats" className="flex items-center gap-2 hidden">
             <TrendingUp className="w-4 h-4" />
             Statistics
           </TabsTrigger>
@@ -875,7 +875,7 @@ export default function EmailDashboard() {
         </TabsContent>
 
         {/* Statistics Tab */}
-        <TabsContent value="stats" className="space-y-4">
+        <TabsContent value="stats" className="space-y-4 hidden">
           <Button onClick={loadStatistics} disabled={loading}>
             <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
             Load Statistics
