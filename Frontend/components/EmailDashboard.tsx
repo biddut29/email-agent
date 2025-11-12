@@ -152,8 +152,8 @@ export default function EmailDashboard() {
     try {
       const { from, to } = getDateRange(dateFilter);
       
-      // Use higher limit for filtered queries to get all emails in the date range
-      const limit = 200;
+      // Use lower limit for faster loading (reduced from 200 to 50)
+      const limit = 50;
       
       const response = await api.getEmails(limit, unreadOnly, 'INBOX', from, to);
       

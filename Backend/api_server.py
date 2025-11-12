@@ -637,18 +637,37 @@ async def get_emails(
                     # Fetch emails via Gmail API
                     emails = gmail_client.get_emails(limit=limit, query=gmail_query)
                     
-                    # Save emails to MongoDB
+                    # Clear vector DB first (before saving to MongoDB)
+                    if vector_store.collection:
+                        try:
+                            clear_result = vector_store.clear()
+                            print(f"✓ Cleared vector store: {clear_result.get('message', 'Success')}")
+                        except Exception as e:
+                            print(f"⚠ Warning: Could not clear vector store: {e}")
+                    
+                    # Save emails to MongoDB asynchronously (don't wait for it)
                     mongo_result = {"saved": 0}
                     if emails and mongodb_manager.emails_collection is not None:
-                        mongo_result = mongodb_manager.save_emails(emails, active_account['id'])
-                        print(f"✓ Saved {mongo_result.get('total', 0)} emails to MongoDB via Gmail API (Inserted: {mongo_result.get('inserted', 0)}, Updated: {mongo_result.get('updated', 0)})")
+                        # Save in background thread to not block response
+                        import threading
+                        def save_emails_async():
+                            try:
+                                result = mongodb_manager.save_emails(emails, active_account['id'])
+                                print(f"✓ Saved {result.get('total', 0)} emails to MongoDB via Gmail API (Inserted: {result.get('inserted', 0)}, Updated: {result.get('updated', 0)})")
+                            except Exception as e:
+                                print(f"⚠ Error saving emails to MongoDB: {e}")
+                        
+                        # Start async save
+                        thread = threading.Thread(target=save_emails_async, daemon=True)
+                        thread.start()
+                        mongo_result = {"saved": len(emails), "async": True}  # Return immediately
                     
                     return {
                         "success": True,
                         "count": len(emails),
                         "emails": emails,
                         "account": active_account['email'],
-                        "mongo_saved": mongo_result.get('total', 0),
+                        "mongo_saved": mongo_result.get('saved', 0),
                         "method": "gmail_api",
                         "date_range": {
                             "from": date_from,
@@ -708,18 +727,37 @@ async def get_emails(
         else:
             emails = receiver.get_emails(folder=folder, limit=limit, unread_only=unread_only)
         
-        # Save emails to MongoDB for persistent storage
+        # Clear vector DB first (before saving to MongoDB)
+        if vector_store.collection:
+            try:
+                clear_result = vector_store.clear()
+                print(f"✓ Cleared vector store: {clear_result.get('message', 'Success')}")
+            except Exception as e:
+                print(f"⚠ Warning: Could not clear vector store: {e}")
+        
+        # Save emails to MongoDB asynchronously (don't wait for it)
         mongo_result = {"saved": 0}
         if emails and mongodb_manager.emails_collection is not None:
-            mongo_result = mongodb_manager.save_emails(emails, active_account['id'])
-            print(f"✓ Saved {mongo_result.get('total', 0)} emails to MongoDB (Inserted: {mongo_result.get('inserted', 0)}, Updated: {mongo_result.get('updated', 0)})")
+            # Save in background thread to not block response
+            import threading
+            def save_emails_async():
+                try:
+                    result = mongodb_manager.save_emails(emails, active_account['id'])
+                    print(f"✓ Saved {result.get('total', 0)} emails to MongoDB (Inserted: {result.get('inserted', 0)}, Updated: {result.get('updated', 0)})")
+                except Exception as e:
+                    print(f"⚠ Error saving emails to MongoDB: {e}")
+            
+            # Start async save
+            thread = threading.Thread(target=save_emails_async, daemon=True)
+            thread.start()
+            mongo_result = {"saved": len(emails), "async": True}  # Return immediately
         
         return {
             "success": True,
             "count": len(emails),
             "emails": emails,
             "account": active_account['email'],
-            "mongo_saved": mongo_result.get('total', 0),
+            "mongo_saved": mongo_result.get('saved', 0),
             "method": "imap",
             "date_range": {
                 "from": date_from,
