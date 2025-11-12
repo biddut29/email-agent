@@ -472,9 +472,9 @@ Best regards,
             from_email = email_data.get('from', '')
             from_name = from_email.split('<')[0].strip() if '<' in from_email else from_email.split('@')[0]
             
-            # Get sender's email from config or account
-            sender_email = config.EMAIL_ADDRESS if hasattr(config, 'EMAIL_ADDRESS') else 'bidduttest@gmail.com'
-            sender_name = sender_email.split('@')[0].replace('.', ' ').title()
+            # Get sender's email from config
+            sender_email = config.EMAIL_ADDRESS if (hasattr(config, 'EMAIL_ADDRESS') and config.EMAIL_ADDRESS) else ''
+            sender_name = sender_email.split('@')[0].replace('.', ' ').title() if sender_email else 'User'
             
             prompt = f"""You are an expert email writing assistant that helps draft natural, conversational email replies. You write in a clear, concise tone that matches the sender's communication style.
 

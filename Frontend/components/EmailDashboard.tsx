@@ -17,8 +17,6 @@ import {
   RefreshCw,
   Send,
   Sparkles,
-  Search,
-  TrendingUp,
   Inbox,
   MailOpen,
   AlertCircle,
@@ -28,7 +26,6 @@ import {
   Filter,
   X,
   Calendar as CalendarIcon,
-  Database,
   LogOut,
 } from 'lucide-react';
 import {
@@ -42,7 +39,6 @@ import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import EmailChat from './EmailChat';
 import AccountManager from './AccountManager';
-import VectorViewer from './VectorViewer';
 import NotificationListener from './NotificationListener';
 import MongoDBViewer from './MongoDBViewer';
 
@@ -52,7 +48,7 @@ export default function EmailDashboard() {
   const [selectedEmail, setSelectedEmail] = useState<Email | null>(null);
   const [loading, setLoading] = useState(false);
   const [stats, setStats] = useState<EmailStats | null>(null);
-  const [healthStatus, setHealthStatus] = useState<any>(null);
+  const [healthStatus, setHealthStatus] = useState<{ status: string; email: string; ai_enabled: boolean; accounts_count?: number } | null>(null);
   const [autoReplyEnabled, setAutoReplyEnabled] = useState<boolean>(false);
   const [aiResponse, setAiResponse] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -95,8 +91,9 @@ export default function EmailDashboard() {
       console.error('Health check failed:', error);
       const errorMessage = error.message || String(error);
       if (errorMessage.includes('Cannot connect to backend')) {
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
         console.error('⚠️ Backend connection failed. Please ensure:');
-        console.error('  1. Backend is running on http://localhost:8000');
+        console.error(`  1. Backend is running on ${apiUrl}`);
         console.error('  2. No firewall is blocking the connection');
         console.error('  3. CORS is properly configured');
       }
@@ -169,9 +166,7 @@ export default function EmailDashboard() {
       // Handle response - check if emails array exists
       if (response.emails && Array.isArray(response.emails)) {
         setEmails(response.emails);
-        console.log(`✓ Loaded ${response.emails.length} emails`);
       } else {
-        console.warn('Unexpected response format:', response);
         setEmails([]);
       }
     } catch (error: any) {
@@ -185,24 +180,6 @@ export default function EmailDashboard() {
     }
   };
 
-  const loadToVector = async () => {
-    setLoading(true);
-    try {
-      const { from, to } = getDateRange(dateFilter);
-      const response = await api.loadToVector(from, to);
-      
-      if (response.success) {
-        alert(`✅ ${response.message}\n\nMongoDB: ${response.mongo_count} emails\nVector DB: ${response.vector_count} emails indexed`);
-      } else {
-        alert(`⚠️ ${response.message}`);
-      }
-    } catch (error) {
-      console.error('Failed to load to vector:', error);
-      alert(`❌ Failed to load to vector database: ${error}`);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const loadStatistics = async () => {
     setLoading(true);
@@ -373,11 +350,6 @@ export default function EmailDashboard() {
                         AI Enabled
                       </Badge>
                     )}
-                    {healthStatus.accounts_count > 1 && (
-                      <Badge variant="outline" className="ml-2">
-                        {healthStatus.accounts_count} accounts
-                      </Badge>
-                    )}
                   </div>
                   <Button
                     onClick={toggleAutoReply}
@@ -397,7 +369,7 @@ export default function EmailDashboard() {
 
       {/* Main Content */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-        <TabsList className="grid w-full grid-cols-4">
+        <TabsList className="grid w-full grid-cols-3">
           <TabsTrigger value="mongodb" className="flex items-center gap-2">
             <Send className="w-4 h-4" />
             Auto Replies
@@ -414,10 +386,6 @@ export default function EmailDashboard() {
                 {emails.length}
               </Badge>
             )}
-          </TabsTrigger>
-          <TabsTrigger value="vector" className="flex items-center gap-2">
-            <Database className="w-4 h-4" />
-            Vector DB
           </TabsTrigger>
         </TabsList>
 
@@ -448,11 +416,6 @@ export default function EmailDashboard() {
               <Button onClick={() => loadEmails(false)} disabled={loading}>
                 <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
                 Load Emails
-              </Button>
-
-              <Button onClick={loadToVector} disabled={loading} variant="secondary">
-                <Database className="w-4 h-4 mr-2" />
-                Load to Vector
               </Button>
 
               {dateFilter !== 'custom' && (
@@ -825,11 +788,6 @@ export default function EmailDashboard() {
         {/* Chat Tab */}
         <TabsContent value="chat" className="space-y-4">
           <EmailChat emails={emails} />
-        </TabsContent>
-
-        {/* Vector Database Tab */}
-        <TabsContent value="vector">
-          <VectorViewer />
         </TabsContent>
 
         {/* Auto Replies Tab */}

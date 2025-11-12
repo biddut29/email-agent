@@ -140,6 +140,7 @@ class AccountManager:
                 "smtp_server": smtp_server,
                 "smtp_port": smtp_port,
                 "is_active": False,
+                "auto_reply_enabled": True,  # Default to enabled
                 "created_at": datetime.utcnow()
             }
             
@@ -318,7 +319,7 @@ class AccountManager:
             return {"error": "MongoDB not available"}
         
         try:
-            allowed_fields = ['email', 'password', 'imap_server', 'imap_port', 'smtp_server', 'smtp_port']
+            allowed_fields = ['email', 'password', 'imap_server', 'imap_port', 'smtp_server', 'smtp_port', 'auto_reply_enabled']
             updates = {k: v for k, v in kwargs.items() if k in allowed_fields}
             
             if not updates:
@@ -482,6 +483,9 @@ class AccountManager:
             except (ValueError, TypeError):
                 account_id = 0
         
+        # Ensure auto_reply_enabled defaults to True for existing accounts
+        auto_reply_enabled = account_doc.get('auto_reply_enabled', True)
+        
         formatted = {
             "id": account_id,  # Integer ID
             "email": account_doc.get('email', ''),
@@ -490,6 +494,7 @@ class AccountManager:
             "smtp_server": account_doc.get('smtp_server', 'smtp.gmail.com'),
             "smtp_port": account_doc.get('smtp_port', 587),
             "is_active": bool(account_doc.get('is_active', False)),
+            "auto_reply_enabled": bool(auto_reply_enabled),
             "created_at": account_doc.get('created_at', datetime.utcnow())
         }
         

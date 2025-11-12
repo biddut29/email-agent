@@ -22,12 +22,9 @@ import {
   Activity,
   Trash2,
   RefreshCw,
-  Settings
+  Bot
 } from 'lucide-react';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 interface Account {
   id: number;
@@ -37,6 +34,7 @@ interface Account {
   smtp_server: string;
   smtp_port: number;
   is_active: boolean;
+  auto_reply_enabled?: boolean;
   created_at: string;
 }
 
@@ -48,32 +46,15 @@ interface Stats {
 
 export default function AdminPage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
-  const [activeAccountId, setActiveAccountId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState<Stats>({ total: 0, active: 0, inactive: 0 });
-  const [config, setConfig] = useState({
-    azure_openai_key: '',
-    azure_openai_endpoint: '',
-    azure_openai_deployment: 'gpt-4.1-mini',
-    azure_openai_api_version: '2024-12-01-preview',
-    ai_provider: 'azure',
-    mongodb_uri: 'mongodb://localhost:27017/',
-    mongodb_db_name: 'email_agent',
-    google_client_id: '',
-    google_client_secret: '',
-    google_redirect_uri: 'http://localhost:8000/api/auth/callback',
-    session_secret: '',
-    frontend_url: 'http://localhost:3000',
-    cors_origins: 'http://localhost:3000,http://127.0.0.1:3000',
-    auto_reply_enabled: true
-  });
-  const [configLoading, setConfigLoading] = useState(false);
+  const [globalAutoReply, setGlobalAutoReply] = useState(false);
 
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
   useEffect(() => {
     loadAccounts();
-    loadConfig();
+    loadGlobalAutoReply();
   }, []);
 
   const loadAccounts = async () => {
@@ -86,22 +67,14 @@ export default function AdminPage() {
       }
       
       const data = await response.json();
-      console.log('Admin: Accounts loaded:', data);
       
       if (data.success) {
-        const formattedAccounts = data.accounts.map((acc: any) => ({
+        const formattedAccounts = data.accounts.map((acc: Account & { id?: string | number }) => ({
           ...acc,
           id: typeof acc.id === 'string' ? parseInt(acc.id, 10) : acc.id
-        }));
+        })) as Account[];
         
         setAccounts(formattedAccounts);
-        setActiveAccountId(
-          data.active_account_id 
-            ? (typeof data.active_account_id === 'string' 
-                ? parseInt(data.active_account_id, 10) 
-                : data.active_account_id)
-            : null
-        );
         
         // Calculate stats
         const total = formattedAccounts.length;
@@ -112,7 +85,7 @@ export default function AdminPage() {
           inactive: total - active
         });
       }
-    } catch (error: any) {
+    } catch (error) {
       console.error('Failed to load accounts:', error);
     } finally {
       setLoading(false);
@@ -165,59 +138,55 @@ export default function AdminPage() {
     }
   };
 
-  const loadConfig = async () => {
+  const loadGlobalAutoReply = async () => {
     try {
-      const response = await fetch(`${apiUrl}/api/config`);
+      const response = await fetch(`${apiUrl}/api/auto-reply/status`);
       if (response.ok) {
         const data = await response.json();
-        if (data.success) {
-          setConfig(data.config);
-        }
+        setGlobalAutoReply(data.auto_reply_enabled || false);
       }
     } catch (error) {
-      console.error('Failed to load config:', error);
+      console.error('Failed to load global auto-reply status:', error);
     }
   };
 
-  const saveConfig = async () => {
-    setConfigLoading(true);
+  const handleToggleGlobalAutoReply = async (enabled: boolean) => {
     try {
-      const response = await fetch(`${apiUrl}/api/config`, {
+      const response = await fetch(`${apiUrl}/api/auto-reply/toggle?enabled=${enabled}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(config)
       });
-      
+
       if (!response.ok) {
-        throw new Error('Failed to save configuration');
+        throw new Error('Failed to toggle global auto-reply');
       }
-      
-      alert('Configuration saved! Please restart the backend.');
-    } catch (error: any) {
-      alert(error.message || 'Failed to save configuration');
-    } finally {
-      setConfigLoading(false);
+
+      setGlobalAutoReply(enabled);
+      alert(`Global auto-reply ${enabled ? 'enabled' : 'disabled'}`);
+    } catch (error) {
+      console.error('Error toggling global auto-reply:', error);
+      alert('Failed to toggle global auto-reply');
     }
   };
 
-  const initFromEnv = async () => {
-    if (!confirm('This will load current .env values into the database. Continue?')) {
-      return;
-    }
-    
+  const handleToggleAccountAutoReply = async (accountId: number, enabled: boolean, email: string) => {
     try {
-      const response = await fetch(`${apiUrl}/api/config/init-from-env`, {
-        method: 'POST'
+      const response = await fetch(`${apiUrl}/api/accounts/${accountId}/auto-reply?enabled=${enabled}`, {
+        method: 'PUT',
       });
-      
+
       if (!response.ok) {
-        throw new Error('Failed to initialize from .env');
+        throw new Error('Failed to toggle account auto-reply');
       }
+
+      // Update local state
+      setAccounts(accounts.map(acc => 
+        acc.id === accountId ? { ...acc, auto_reply_enabled: enabled } : acc
+      ));
       
-      alert('Configuration loaded from .env!');
-      loadConfig();
-    } catch (error: any) {
-      alert(error.message || 'Failed to initialize from .env');
+      alert(`Auto-reply ${enabled ? 'enabled' : 'disabled'} for ${email}`);
+    } catch (error) {
+      console.error('Error toggling account auto-reply:', error);
+      alert('Failed to toggle account auto-reply');
     }
   };
 
@@ -254,10 +223,23 @@ export default function AdminPage() {
               Manage email accounts and view system statistics
             </p>
           </div>
-          <Button onClick={loadAccounts} variant="outline">
-            <RefreshCw className="w-4 h-4 mr-2" />
-            Refresh
-          </Button>
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <Bot className="w-4 h-4" />
+              <span className="text-sm font-medium">Global Auto-Reply:</span>
+              <Switch 
+                checked={globalAutoReply} 
+                onCheckedChange={handleToggleGlobalAutoReply}
+              />
+              <span className="text-sm text-muted-foreground">
+                {globalAutoReply ? 'ON' : 'OFF'}
+              </span>
+            </div>
+            <Button onClick={loadAccounts} variant="outline">
+              <RefreshCw className="w-4 h-4 mr-2" />
+              Refresh
+            </Button>
+          </div>
         </div>
 
         {/* Stats Cards */}
@@ -302,115 +284,6 @@ export default function AdminPage() {
           </Card>
         </div>
 
-        {/* Application Configuration */}
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Settings className="w-5 h-5" />
-                <div>
-                  <CardTitle>Application Configuration</CardTitle>
-                  <CardDescription>
-                    Manage settings (stored in database, not .env)
-                  </CardDescription>
-                </div>
-              </div>
-              <Button variant="outline" size="sm" onClick={initFromEnv}>
-                Load from .env
-              </Button>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <Tabs defaultValue="azure" className="w-full">
-              <TabsList className="grid w-full grid-cols-4">
-                <TabsTrigger value="azure">Azure OpenAI</TabsTrigger>
-                <TabsTrigger value="mongodb">MongoDB</TabsTrigger>
-                <TabsTrigger value="oauth">OAuth</TabsTrigger>
-                <TabsTrigger value="other">Other</TabsTrigger>
-              </TabsList>
-              
-              <TabsContent value="azure" className="space-y-4 mt-4">
-                <div className="space-y-2">
-                  <Label>Azure OpenAI Key</Label>
-                  <Input type="password" value={config.azure_openai_key} onChange={(e) => setConfig({...config, azure_openai_key: e.target.value})} />
-                </div>
-                <div className="space-y-2">
-                  <Label>Azure OpenAI Endpoint</Label>
-                  <Input value={config.azure_openai_endpoint} onChange={(e) => setConfig({...config, azure_openai_endpoint: e.target.value})} />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Deployment</Label>
-                    <Input value={config.azure_openai_deployment} onChange={(e) => setConfig({...config, azure_openai_deployment: e.target.value})} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>API Version</Label>
-                    <Input value={config.azure_openai_api_version} onChange={(e) => setConfig({...config, azure_openai_api_version: e.target.value})} />
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <Label>AI Provider</Label>
-                  <Input value={config.ai_provider} onChange={(e) => setConfig({...config, ai_provider: e.target.value})} />
-                </div>
-              </TabsContent>
-              
-              <TabsContent value="mongodb" className="space-y-4 mt-4">
-                <div className="space-y-2">
-                  <Label>MongoDB URI</Label>
-                  <Input value={config.mongodb_uri} onChange={(e) => setConfig({...config, mongodb_uri: e.target.value})} />
-                </div>
-                <div className="space-y-2">
-                  <Label>Database Name</Label>
-                  <Input value={config.mongodb_db_name} onChange={(e) => setConfig({...config, mongodb_db_name: e.target.value})} />
-                </div>
-              </TabsContent>
-              
-              <TabsContent value="oauth" className="space-y-4 mt-4">
-                <div className="space-y-2">
-                  <Label>Google Client ID</Label>
-                  <Input value={config.google_client_id} onChange={(e) => setConfig({...config, google_client_id: e.target.value})} />
-                </div>
-                <div className="space-y-2">
-                  <Label>Google Client Secret</Label>
-                  <Input type="password" value={config.google_client_secret} onChange={(e) => setConfig({...config, google_client_secret: e.target.value})} />
-                </div>
-                <div className="space-y-2">
-                  <Label>Redirect URI</Label>
-                  <Input value={config.google_redirect_uri} onChange={(e) => setConfig({...config, google_redirect_uri: e.target.value})} />
-                </div>
-              </TabsContent>
-              
-              <TabsContent value="other" className="space-y-4 mt-4">
-                <div className="space-y-2">
-                  <Label>Session Secret</Label>
-                  <Input type="password" value={config.session_secret} onChange={(e) => setConfig({...config, session_secret: e.target.value})} />
-                </div>
-                <div className="space-y-2">
-                  <Label>Frontend URL</Label>
-                  <Input value={config.frontend_url} onChange={(e) => setConfig({...config, frontend_url: e.target.value})} />
-                </div>
-                <div className="space-y-2">
-                  <Label>CORS Origins (comma-separated)</Label>
-                  <Input value={config.cors_origins} onChange={(e) => setConfig({...config, cors_origins: e.target.value})} />
-                </div>
-                <div className="flex items-center space-x-2">
-                  <Switch checked={config.auto_reply_enabled} onCheckedChange={(checked: boolean) => setConfig({...config, auto_reply_enabled: checked})} />
-                  <Label>Auto Reply Enabled</Label>
-                </div>
-              </TabsContent>
-            </Tabs>
-            
-            <div className="flex justify-end gap-2 mt-6">
-              <Button variant="outline" onClick={loadConfig} disabled={configLoading}>
-                Reset
-              </Button>
-              <Button onClick={saveConfig} disabled={configLoading}>
-                {configLoading ? 'Saving...' : 'Save Configuration'}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-
         {/* Accounts Table */}
         <Card>
           <CardHeader>
@@ -435,6 +308,7 @@ export default function AdminPage() {
                       <TableHead>IMAP Server</TableHead>
                       <TableHead>SMTP Server</TableHead>
                       <TableHead>Status</TableHead>
+                      <TableHead>Auto-Reply</TableHead>
                       <TableHead>Created</TableHead>
                       <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
@@ -469,6 +343,19 @@ export default function AdminPage() {
                               Inactive
                             </Badge>
                           )}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <Switch 
+                              checked={account.auto_reply_enabled !== false} 
+                              onCheckedChange={(checked) => 
+                                handleToggleAccountAutoReply(account.id, checked, account.email)
+                              }
+                            />
+                            <span className="text-sm text-muted-foreground">
+                              {account.auto_reply_enabled !== false ? 'ON' : 'OFF'}
+                            </span>
+                          </div>
                         </TableCell>
                         <TableCell className="text-sm text-muted-foreground">
                           <div className="flex items-center">

@@ -68,6 +68,10 @@ class GmailAPIClient:
                         client_secret = os.getenv('GMAIL_CLIENT_SECRET')
                         
                         if client_id and client_secret:
+                            # Import config to get redirect URI
+                            import config as app_config
+                            redirect_uri = app_config.GOOGLE_REDIRECT_URI or "http://localhost:8000/api/auth/callback"
+                            
                             # Create credentials dict
                             credentials_info = {
                                 "installed": {
@@ -75,7 +79,7 @@ class GmailAPIClient:
                                     "client_secret": client_secret,
                                     "auth_uri": "https://accounts.google.com/o/oauth2/auth",
                                     "token_uri": "https://oauth2.googleapis.com/token",
-                                    "redirect_uris": ["http://localhost"]
+                                    "redirect_uris": [redirect_uri]
                                 }
                             }
                             

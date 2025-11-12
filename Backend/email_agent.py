@@ -774,6 +774,17 @@ class EmailAgent:
         """
         # Use lock to prevent race conditions when multiple threads check the same email
         with self.auto_reply_lock:
+            # Check global auto-reply setting first
+            if not self.auto_reply_enabled:
+                return False
+            
+            # Check per-account auto-reply setting
+            if account_id and self.account_manager:
+                account = self.account_manager.get_account(account_id)
+                if account and not account.get('auto_reply_enabled', True):
+                    print(f"⏭️  Skipping auto-reply: Disabled for account {account.get('email')}")
+                    return False
+            
             message_id = email.get('message_id')
             if not message_id:
                 return False

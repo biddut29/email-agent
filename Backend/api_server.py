@@ -152,9 +152,10 @@ async def startup_event():
             print("❌ ERROR: MongoDB is not connected or database is not accessible.")
             print("   Please ensure MongoDB is running and MONGODB_URI is correct.")
         elif not config_manager.collection_exists():
+            frontend_url = config.FRONTEND_URL or "http://localhost:3000"
             print("❌ ERROR: Configuration collection 'app_config' does not exist in database.")
             print("   Please use the admin panel to initialize configuration:")
-            print("   1. Go to http://localhost:3000/admin")
+            print(f"   1. Go to {frontend_url}/admin")
             print("   2. Click 'Load from .env' button to initialize configuration")
             print("   3. Or manually configure settings in the Application Configuration section")
         else:
@@ -1650,14 +1651,34 @@ async def add_account(request: AccountAddRequest):
 
 @app.delete("/api/accounts/{account_id}")
 async def delete_account(account_id: int):
-    """Delete an email account"""
+    """Delete an email account and all related data"""
     try:
+        # Delete all emails from MongoDB for this account
+        mongo_result = {"deleted": 0}
+        if mongodb_manager.emails_collection is not None:
+            mongo_result = mongodb_manager.clear_account_emails(account_id)
+            if mongo_result.get('success'):
+                print(f"✓ Deleted {mongo_result.get('deleted', 0)} emails from MongoDB for account {account_id}")
+        
+        # Delete all emails from vector store for this account
+        vector_result = {"deleted": 0}
+        if vector_store.collection:
+            vector_result = vector_store.clear_account_emails(account_id)
+            if vector_result.get('success'):
+                print(f"✓ Deleted {vector_result.get('deleted', 0)} emails from vector store for account {account_id}")
+        
+        # Finally, delete the account itself
         result = account_manager.remove_account(account_id)
         
         if 'error' in result:
             raise HTTPException(status_code=404, detail=result['error'])
         
-        return result
+        return {
+            "success": True,
+            "message": "Account and all related data deleted successfully",
+            "mongo_deleted": mongo_result.get('deleted', 0),
+            "vector_deleted": vector_result.get('deleted', 0)
+        }
     except HTTPException:
         raise
     except Exception as e:
@@ -1708,6 +1729,30 @@ async def update_account(account_id: int, request: AccountUpdateRequest):
             raise HTTPException(status_code=400, detail=result['error'])
         
         return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/api/accounts/{account_id}/auto-reply")
+async def toggle_account_auto_reply(account_id: int, enabled: bool):
+    """Toggle auto-reply for a specific account"""
+    try:
+        result = account_manager.update_account(account_id, auto_reply_enabled=enabled)
+        
+        if 'error' in result:
+            raise HTTPException(status_code=404, detail=result['error'])
+        
+        status_text = "enabled" if enabled else "disabled"
+        account = account_manager.get_account(account_id)
+        print(f"🤖 Auto-reply {status_text} for account: {account.get('email') if account else account_id}")
+        
+        return {
+            "success": True,
+            "auto_reply_enabled": enabled,
+            "message": f"Auto-reply {status_text} for account"
+        }
     except HTTPException:
         raise
     except Exception as e:
@@ -2802,10 +2847,11 @@ async def start_gmail_watch():
 
 # Run server
 if __name__ == "__main__":
+    port = int(os.getenv("PORT", "8000"))
     uvicorn.run(
         "api_server:app",
         host="0.0.0.0",
-        port=8000,
+        port=port,
         reload=True,
         log_level="info"
     )
