@@ -643,6 +643,12 @@ class EmailAgent:
             
             print(f"\n{idx}. Generating response to: {email_data['subject']}")
             
+            # Check if AI agent has a client
+            if not self.ai_agent.client:
+                print(f"⚠️  WARNING: AI agent has no client - will use template response")
+                print(f"   AI Provider: {self.ai_agent.provider}")
+                print(f"   This indicates AI configuration is missing or failed")
+            
             # Generate response
             response_body = self.ai_agent.generate_response(email_data, tone=tone)
             
