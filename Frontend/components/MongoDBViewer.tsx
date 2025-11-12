@@ -373,7 +373,7 @@ export default function MongoDBViewer() {
           <div className="flex items-center justify-between">
             <div>
               <CardTitle className="flex items-center gap-2">
-                <Database className="w-5 h-5" />
+                <Send className="w-5 h-5" />
                 Auto Reply History
               </CardTitle>
               <CardDescription>View emails and AI-generated auto-replies</CardDescription>
