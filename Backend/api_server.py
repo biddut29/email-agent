@@ -637,14 +637,6 @@ async def get_emails(
                     # Fetch emails via Gmail API
                     emails = gmail_client.get_emails(limit=limit, query=gmail_query)
                     
-                    # Clear vector DB first (before saving to MongoDB)
-                    if vector_store.collection:
-                        try:
-                            clear_result = vector_store.clear()
-                            print(f"✓ Cleared vector store: {clear_result.get('message', 'Success')}")
-                        except Exception as e:
-                            print(f"⚠ Warning: Could not clear vector store: {e}")
-                    
                     # Save emails to MongoDB asynchronously (don't wait for it)
                     mongo_result = {"saved": 0}
                     if emails and mongodb_manager.emails_collection is not None:
@@ -740,14 +732,6 @@ async def get_emails(
             emails = receiver.search_emails(" ".join(search_criteria), folder=folder, limit=limit)
         else:
             emails = receiver.get_emails(folder=folder, limit=limit, unread_only=unread_only)
-        
-        # Clear vector DB first (before saving to MongoDB)
-        if vector_store.collection:
-            try:
-                clear_result = vector_store.clear()
-                print(f"✓ Cleared vector store: {clear_result.get('message', 'Success')}")
-            except Exception as e:
-                print(f"⚠ Warning: Could not clear vector store: {e}")
         
         # Save emails to MongoDB asynchronously (don't wait for it)
         mongo_result = {"saved": 0}
