@@ -419,7 +419,7 @@ export default function EmailDashboard() {
               </Badge>
             )}
           </TabsTrigger>
-          <TabsTrigger value="search" className="flex items-center gap-2">
+          <TabsTrigger value="search" className="flex items-center gap-2 hidden">
             <Search className="w-4 h-4" />
             Search
           </TabsTrigger>
@@ -851,7 +851,7 @@ export default function EmailDashboard() {
         </TabsContent>
 
         {/* Search Tab */}
-        <TabsContent value="search" className="space-y-4">
+        <TabsContent value="search" className="space-y-4 hidden">
           <Card>
             <CardHeader>
               <CardTitle>Search Emails</CardTitle>
