@@ -399,7 +399,7 @@ export default function EmailDashboard() {
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
         <TabsList className="grid w-full grid-cols-4">
           <TabsTrigger value="mongodb" className="flex items-center gap-2">
-            <Database className="w-4 h-4" />
+            <Send className="w-4 h-4" />
             Auto Replies
           </TabsTrigger>
           <TabsTrigger value="inbox" className="flex items-center gap-2">
