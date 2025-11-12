@@ -406,10 +406,6 @@ export default function EmailDashboard() {
             <Inbox className="w-4 h-4" />
             Inbox
           </TabsTrigger>
-          <TabsTrigger value="unread" className="flex items-center gap-2 hidden">
-            <MailOpen className="w-4 h-4" />
-            Unread
-          </TabsTrigger>
           <TabsTrigger value="chat" className="flex items-center gap-2">
             <MessageSquare className="w-4 h-4" />
             Chat
@@ -418,14 +414,6 @@ export default function EmailDashboard() {
                 {emails.length}
               </Badge>
             )}
-          </TabsTrigger>
-          <TabsTrigger value="search" className="flex items-center gap-2 hidden">
-            <Search className="w-4 h-4" />
-            Search
-          </TabsTrigger>
-          <TabsTrigger value="stats" className="flex items-center gap-2 hidden">
-            <TrendingUp className="w-4 h-4" />
-            Statistics
           </TabsTrigger>
           <TabsTrigger value="vector" className="flex items-center gap-2">
             <Database className="w-4 h-4" />
@@ -832,17 +820,6 @@ export default function EmailDashboard() {
               </CardContent>
             </Card>
           </div>
-        </TabsContent>
-
-        {/* Unread Tab */}
-        <TabsContent value="unread" className="hidden">
-          <Button onClick={() => loadEmails(true)} disabled={loading}>
-            <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
-            Load Unread Emails
-          </Button>
-          <p className="text-sm text-muted-foreground mt-2">
-            Same view as inbox, but filtered for unread emails only
-          </p>
         </TabsContent>
 
         {/* Chat Tab */}
