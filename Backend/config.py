@@ -28,7 +28,25 @@ AI_PROVIDER = os.getenv("AI_PROVIDER", "azure")
 # USE_AZURE_OPENAI is derived from AI_PROVIDER (for backward compatibility)
 USE_AZURE_OPENAI = (AI_PROVIDER.lower() == "azure")
 AZURE_OPENAI_KEY = os.getenv("AZURE_OPENAI_KEY", "")
-AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT", "")
+# Fix endpoint format: Azure OpenAI client expects base URL only, not full API path
+_raw_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "")
+if _raw_endpoint:
+    # If endpoint contains /openai/deployments/, extract just the base URL
+    if "/openai/deployments/" in _raw_endpoint:
+        # Extract base URL: https://xxx.cognitiveservices.azure.com/
+        import re
+        match = re.match(r"(https://[^/]+)/", _raw_endpoint)
+        if match:
+            AZURE_OPENAI_ENDPOINT = match.group(1) + "/"
+        else:
+            AZURE_OPENAI_ENDPOINT = _raw_endpoint
+    else:
+        AZURE_OPENAI_ENDPOINT = _raw_endpoint
+    # Ensure endpoint ends with /
+    if AZURE_OPENAI_ENDPOINT and not AZURE_OPENAI_ENDPOINT.endswith("/"):
+        AZURE_OPENAI_ENDPOINT += "/"
+else:
+    AZURE_OPENAI_ENDPOINT = ""
 AZURE_OPENAI_DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4.1-mini")
 AZURE_OPENAI_API_VERSION = os.getenv("AZURE_OPENAI_API_VERSION", "2024-12-01-preview")
 
