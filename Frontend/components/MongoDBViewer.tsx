@@ -374,9 +374,9 @@ export default function MongoDBViewer() {
             <div>
               <CardTitle className="flex items-center gap-2">
                 <Database className="w-5 h-5" />
-                MongoDB Email Storage
+                Auto Reply History
               </CardTitle>
-              <CardDescription>All emails stored in persistent database</CardDescription>
+              <CardDescription>View emails and AI-generated auto-replies</CardDescription>
             </div>
             <div className="flex gap-2">
               <Button onClick={() => { loadStats(); loadEmails(); }} disabled={loading} variant="outline">
