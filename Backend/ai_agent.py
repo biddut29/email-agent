@@ -285,8 +285,13 @@ Summary:"""
             Generated response text
         """
         if self.client:
+            print(f"✅ Using AI client (provider: {self.provider})")
             return self._ai_generate_response(email_data, tone)
         else:
+            print(f"⚠️  AI client is None - using template response")
+            print(f"   Provider: {self.provider}")
+            print(f"   Client status: {self.client}")
+            print(f"   This means AI is not configured or initialization failed")
             return self._template_response(email_data)
     
     def _template_response(self, email_data: Dict) -> str:
