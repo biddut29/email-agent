@@ -27,6 +27,7 @@ from mongodb_manager import mongodb_manager
 from gmail_api_client import GmailAPIClient
 from auth_manager import AuthManager
 from config_manager import ConfigManager
+from __version__ import __version__ as backend_version
 import config
 
 # Initialize account manager with MongoDB (will be set up in startup)
@@ -265,7 +266,8 @@ async def health_check():
         "status": "healthy",
         "email": active_account['email'] if active_account else config.EMAIL_ADDRESS,
         "ai_enabled": email_agent.ai_enabled if email_agent else False,
-        "accounts_count": account_manager.get_account_count()
+        "accounts_count": account_manager.get_account_count(),
+        "version": backend_version
     }
 
 

@@ -102,7 +102,7 @@ class EmailAgentAPI {
 
   // Health check
   async healthCheck() {
-    return this.request<{ status: string; email: string; ai_enabled: boolean }>('/api/health');
+    return this.request<{ status: string; email: string; ai_enabled: boolean; version?: string; accounts_count?: number }>('/api/health');
   }
 
   // Get emails with optional date range
