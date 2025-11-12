@@ -41,6 +41,7 @@ import EmailChat from './EmailChat';
 import AccountManager from './AccountManager';
 import NotificationListener from './NotificationListener';
 import MongoDBViewer from './MongoDBViewer';
+import { FRONTEND_VERSION } from '@/lib/version';
 
 export default function EmailDashboard() {
   const router = useRouter();
@@ -48,7 +49,7 @@ export default function EmailDashboard() {
   const [selectedEmail, setSelectedEmail] = useState<Email | null>(null);
   const [loading, setLoading] = useState(false);
   const [stats, setStats] = useState<EmailStats | null>(null);
-  const [healthStatus, setHealthStatus] = useState<{ status: string; email: string; ai_enabled: boolean; accounts_count?: number } | null>(null);
+  const [healthStatus, setHealthStatus] = useState<{ status: string; email: string; ai_enabled: boolean; accounts_count?: number; version?: string } | null>(null);
   const [autoReplyEnabled, setAutoReplyEnabled] = useState<boolean>(false);
   const [aiResponse, setAiResponse] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -318,6 +319,16 @@ export default function EmailDashboard() {
           <p className="text-muted-foreground mt-2">
             AI-powered email management system
           </p>
+          <div className="flex items-center gap-3 mt-1">
+            <Badge variant="outline" className="text-xs">
+              FE: v{FRONTEND_VERSION}
+            </Badge>
+            {healthStatus?.version && (
+              <Badge variant="outline" className="text-xs">
+                BE: v{healthStatus.version}
+              </Badge>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-4">
           {/* Account Manager - Hidden */}
