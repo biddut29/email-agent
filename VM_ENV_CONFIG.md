@@ -87,7 +87,31 @@ If you need to manually create/update .env files on the VM:
    sudo docker-compose -f docker-compose.dev.yml restart backend frontend
    ```
 
-## Notes
+## Important Notes
+
+### What Persists vs. What Gets Overwritten
+
+**⚠️ Code Changes on VM:**
+- **Will be LOST** on next deployment
+- The workflow runs `git reset --hard origin/dev` which overwrites all local changes
+- Always commit code changes to git and push before deploying
+
+**✅ .env File Changes:**
+- **Will PERSIST** (workflow only updates specific variables)
+- Manual edits to `.env` files remain unless the workflow overwrites that specific variable
+
+**✅ Database & Data:**
+- **Will PERSIST** (MongoDB and ChromaDB use Docker volumes)
+- Account data, emails, and vector store data are preserved
+
+**⚠️ Frontend Changes:**
+- **Will be LOST** (frontend uses built image, no volume mounts)
+- Requires code commit and rebuild
+
+### Best Practice
+Always commit and push code changes to git before deploying. The deployment workflow pulls fresh code from the repository, so any uncommitted changes on the VM will be lost.
+
+### Other Notes
 
 - The deployment workflow automatically sets production URLs
 - `.env` is loaded first, then `.env.dev` overrides it
