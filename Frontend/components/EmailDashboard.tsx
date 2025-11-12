@@ -400,7 +400,7 @@ export default function EmailDashboard() {
         <TabsList className="grid w-full grid-cols-4">
           <TabsTrigger value="mongodb" className="flex items-center gap-2">
             <Database className="w-4 h-4" />
-            MongoDB
+            Auto Replies
           </TabsTrigger>
           <TabsTrigger value="inbox" className="flex items-center gap-2">
             <Inbox className="w-4 h-4" />
@@ -832,7 +832,7 @@ export default function EmailDashboard() {
           <VectorViewer />
         </TabsContent>
 
-        {/* MongoDB Storage Tab */}
+        {/* Auto Replies Tab */}
         <TabsContent value="mongodb">
           <MongoDBViewer />
         </TabsContent>
