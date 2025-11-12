@@ -406,7 +406,7 @@ export default function EmailDashboard() {
             <Inbox className="w-4 h-4" />
             Inbox
           </TabsTrigger>
-          <TabsTrigger value="unread" className="flex items-center gap-2">
+          <TabsTrigger value="unread" className="flex items-center gap-2 hidden">
             <MailOpen className="w-4 h-4" />
             Unread
           </TabsTrigger>
@@ -835,7 +835,7 @@ export default function EmailDashboard() {
         </TabsContent>
 
         {/* Unread Tab */}
-        <TabsContent value="unread">
+        <TabsContent value="unread" className="hidden">
           <Button onClick={() => loadEmails(true)} disabled={loading}>
             <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
             Load Unread Emails
