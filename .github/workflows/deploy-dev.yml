@@ -309,15 +309,32 @@ jobs:
               exit 1
             fi
             
-            # Verify frontend image was created
+            # Verify images were created
             echo ""
-            echo "🔍 Verifying frontend image..."
+            echo "🔍 Verifying Docker images..."
             if sudo docker images | grep -q "email-agent-frontend"; then
               echo "✅ Frontend image exists"
               sudo docker images | grep "email-agent-frontend" | head -1
             else
               echo "❌ Frontend image not found!"
               exit 1
+            fi
+            
+            if sudo docker images | grep -q "email-agent-backend"; then
+              echo "✅ Backend image exists"
+              sudo docker images | grep "email-agent-backend" | head -1
+            else
+              echo "❌ Backend image not found!"
+              exit 1
+            fi
+            
+            # Verify openai package is installed in backend image
+            echo ""
+            echo "🔍 Verifying openai package in backend image..."
+            if sudo docker run --rm email-agent-backend-dev python3 -c "import openai; print('✅ OpenAI package installed:', openai.__version__)" 2>/dev/null; then
+              echo "✅ OpenAI package is installed in backend image"
+            else
+              echo "⚠️  OpenAI package check failed (may need to rebuild)"
             fi
             
             # Start containers
