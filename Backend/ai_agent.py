@@ -485,11 +485,15 @@ CRITICAL RULES - FOLLOW STRICTLY:
 1. NEVER start with "Thank you for your email" or "Hi [Name], Thank you for your email"
 2. NEVER use "Regarding your question" or "Regarding [topic]"
 3. NEVER use "I received your message" or "Thank you for reaching out"
-4. NEVER use formal business email templates
-5. ALWAYS answer questions directly and naturally
-6. Match the sender's tone - if they're casual, be casual; if formal, be professional
-7. Keep responses concise (2-4 sentences) but meaningful
-8. Write as if texting a friend (for casual emails) - be friendly, warm, conversational
+4. NEVER use "I see you reached out about..." or "I see you asked about..."
+5. NEVER use "How can I help you today?" or similar customer service phrases
+6. NEVER use "thank you for asking" - just answer directly
+7. NEVER use formal business email templates
+8. ALWAYS answer questions directly and naturally - respond as if in a conversation
+9. Match the sender's tone - if they're casual, be casual; if formal, be professional
+10. Keep responses concise (2-4 sentences) but meaningful
+11. Write as if texting a friend (for casual emails) - be friendly, warm, conversational
+12. If asked "How are you?" → Answer directly: "I'm doing well! How about you?" (NOT "I'm doing well, thank you for asking!")
 
 WHAT TO DO:
 - If they ask "How are you?" → Start directly: "I'm doing well, thanks! How about you?"
@@ -505,14 +509,19 @@ BAD EXAMPLES (DO NOT DO THIS - THESE ARE WRONG):
 ❌ "Hi Biddut Hossain, Thank you for your email. Regarding your question: where are you? Let me look into that."
 ❌ "Thank you for reaching out. I received your message about your health status."
 ❌ "Hi, Thank you for your email regarding [subject]."
-❌ ANY response that starts with "Thank you for your email" or "Regarding your question"
+❌ "I'm doing well, thank you for asking!" (WRONG - too formal)
+❌ "I see you reached out about 'Status'. How can I help you today?" (WRONG - generic customer service)
+❌ "I see you asked about [topic]. Let me help you with that." (WRONG - too formal)
+❌ ANY response that starts with "Thank you for your email", "Regarding your question", "I see you reached out", or "How can I help you today?"
 
 GOOD EXAMPLES (DO THIS - THESE ARE CORRECT):
 ✅ "Yes, I'm doing great! How are you?" (for "are you okay?")
 ✅ "I'm here and available. What's up!" (for "where are you?")
 ✅ "All good here! How are you?" (for health status questions)
-✅ "I'm doing well, thanks! How about you?" (for "how are you?")
+✅ "I'm doing well! How about you?" (for "how are you?" - direct, no "thank you for asking")
 ✅ "Hey! What's up!" (for casual greetings)
+✅ "Everything's good! What do you need?" (for status questions - direct answer)
+✅ "I'm doing well! How can I help?" (for greetings with offers - natural, not customer service tone)
 
 OUTPUT:
 - Write only the email body (no subject line needed - it's a reply)
@@ -540,7 +549,7 @@ Response:"""
                 response = self.client.chat.completions.create(
                     model=self.azure_deployment,
                     messages=[
-                        {"role": "system", "content": "You are an expert email writing assistant. You write natural, conversational email replies. CRITICAL: NEVER start with 'Thank you for your email' or 'Hi [Name], Thank you for your email'. NEVER use 'Regarding your question' or 'I received your message'. Always answer questions directly and immediately, as if texting a friend. For 'what is your health condition?' respond with 'All good here! How are you?' - NO formal prefaces. ALWAYS end with 'Best regards,' on a separate line, followed by the sender name on the next line. DO NOT include email addresses in signatures."},
+                        {"role": "system", "content": "You are an expert email writing assistant. You write natural, conversational email replies. CRITICAL RULES: NEVER start with 'Thank you for your email', 'I see you reached out about...', or 'How can I help you today?'. NEVER use 'thank you for asking' - just answer directly. NEVER use 'Regarding your question' or 'I received your message'. Always answer questions directly and immediately, as if texting a friend. For 'How are you?' respond with 'I'm doing well! How about you?' - NOT 'I'm doing well, thank you for asking!'. For 'what is your health condition?' respond with 'All good here! How are you?' - NO formal prefaces. ALWAYS end with 'Best regards,' on a separate line, followed by the sender name on the next line. DO NOT include email addresses in signatures."},
                         {"role": "user", "content": prompt}
                     ],
                     temperature=1.0,  # Higher temperature for more natural, creative responses
@@ -555,7 +564,7 @@ Response:"""
                 response = self.client.chat.completions.create(
                     model="gpt-3.5-turbo",
                     messages=[
-                        {"role": "system", "content": "You are an expert email writing assistant. You write natural, conversational email replies. CRITICAL: NEVER start with 'Thank you for your email' or 'Hi [Name], Thank you for your email'. NEVER use 'Regarding your question' or 'I received your message'. Always answer questions directly and immediately, as if texting a friend. For 'what is your health condition?' respond with 'All good here! How are you?' - NO formal prefaces. ALWAYS end with 'Best regards,' on a separate line, followed by the sender name on the next line. DO NOT include email addresses in signatures."},
+                        {"role": "system", "content": "You are an expert email writing assistant. You write natural, conversational email replies. CRITICAL RULES: NEVER start with 'Thank you for your email', 'I see you reached out about...', or 'How can I help you today?'. NEVER use 'thank you for asking' - just answer directly. NEVER use 'Regarding your question' or 'I received your message'. Always answer questions directly and immediately, as if texting a friend. For 'How are you?' respond with 'I'm doing well! How about you?' - NOT 'I'm doing well, thank you for asking!'. For 'what is your health condition?' respond with 'All good here! How are you?' - NO formal prefaces. ALWAYS end with 'Best regards,' on a separate line, followed by the sender name on the next line. DO NOT include email addresses in signatures."},
                         {"role": "user", "content": prompt}
                     ],
                     temperature=1.0,
@@ -674,6 +683,7 @@ Response:"""
                     'thank you for your email',
                     'thank you for asking',
                     'thanks for asking',
+                    'i\'m doing well, thank you for asking',  # Specific pattern from user's example
                     'hi ', 'hello ', 'dear ',
                     'regarding',
                     'regarding your question',
@@ -684,6 +694,8 @@ Response:"""
                     # REMOVED: 'best regards' - we want to keep this for signature
                     'sincerely',
                     'i see you reached out',
+                    'i see you reached out about',  # Specific pattern from user's example
+                    'i see you asked about',
                     'i see you contacted',
                     'i see you reached',
                     'reached out about',
@@ -691,7 +703,8 @@ Response:"""
                     'let me look into this',
                     'get back to you',
                     'how can i help you today',
-                    'how can i help'
+                    'how can i help',
+                    'i see you reached out about'  # Ensure this is caught
                 ]:
                     if phrase in line_lower:
                         skip_line = True
