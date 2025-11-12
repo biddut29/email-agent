@@ -26,6 +26,8 @@ class AIAgent:
         # Initialize Azure OpenAI client
         # Read provider from .env files
         db_provider = config.AI_PROVIDER
+        print(f"🔍 AI Agent init - Provider from config: '{db_provider}', Provider param: '{self.provider}'")
+        
         if db_provider.lower() == "azure" and self.provider == "azure":
             try:
                 from openai import AzureOpenAI
@@ -36,18 +38,40 @@ class AIAgent:
                 azure_deployment = config.AZURE_OPENAI_DEPLOYMENT
                 azure_api_version = config.AZURE_OPENAI_API_VERSION
                 
+                print(f"🔍 Azure OpenAI config check:")
+                print(f"  Key: {'SET' if azure_key else 'NOT SET'} ({len(azure_key) if azure_key else 0} chars)")
+                print(f"  Endpoint: {azure_endpoint[:80] if azure_endpoint else 'NOT SET'}...")
+                print(f"  Deployment: {azure_deployment}")
+                print(f"  API Version: {azure_api_version}")
+                
                 # Check if Azure OpenAI credentials are configured
                 if not azure_key or not azure_endpoint:
                     print("⚠ Azure OpenAI credentials not configured. Please configure in admin panel or database.")
+                    self.client = None
                 else:
-                    self.client = AzureOpenAI(
-                        api_key=azure_key,
-                        api_version=azure_api_version,
-                        azure_endpoint=azure_endpoint
-                    )
-                    self.azure_deployment = azure_deployment
-                    print(f"✓ Azure OpenAI client initialized (deployment: {self.azure_deployment})")
-                    print(f"  Endpoint: {azure_endpoint[:50]}...")
+                    try:
+                        self.client = AzureOpenAI(
+                            api_key=azure_key,
+                            api_version=azure_api_version,
+                            azure_endpoint=azure_endpoint
+                        )
+                        self.azure_deployment = azure_deployment
+                        print(f"✓ Azure OpenAI client initialized (deployment: {self.azure_deployment})")
+                        print(f"  Endpoint: {azure_endpoint[:80]}...")
+                        
+                        # Test the client with a simple call
+                        print("🔍 Testing Azure OpenAI client...")
+                        test_response = self.client.chat.completions.create(
+                            model=self.azure_deployment,
+                            messages=[{"role": "user", "content": "Say hello"}],
+                            max_tokens=5
+                        )
+                        print(f"✅ Azure OpenAI client test successful: {test_response.choices[0].message.content}")
+                    except Exception as init_error:
+                        print(f"❌ Failed to initialize Azure OpenAI client: {init_error}")
+                        import traceback
+                        traceback.print_exc()
+                        self.client = None
             except ImportError:
                 print("⚠ OpenAI package not installed. Run: pip install openai")
                 self.client = None
@@ -56,9 +80,11 @@ class AIAgent:
                 import traceback
                 traceback.print_exc()
                 self.client = None
+        else:
+            print(f"⚠ Skipping Azure OpenAI init - Provider mismatch: config='{db_provider}', param='{self.provider}'")
         
         # Initialize regular OpenAI client
-        elif self.provider == "openai":
+        if self.provider == "openai":
             self.api_key = api_key or config.OPENAI_API_KEY
             if self.api_key:
                 try:
