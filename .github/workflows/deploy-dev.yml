@@ -375,6 +375,45 @@ jobs:
             sudo docker exec email-agent-backend-dev env 2>/dev/null | grep -E "AZURE_OPENAI_KEY|GOOGLE_CLIENT_ID|MONGODB_URI" | head -3 | sed 's/=.*/=***/' || echo "⚠️  Cannot check container environment"
             
             echo ""
+            echo "🤖 Testing AI (Azure OpenAI) initialization:"
+            echo "Checking backend logs for AI initialization..."
+            sleep 5  # Wait for backend to fully start
+            sudo docker-compose -f docker-compose.dev.yml logs backend --tail=50 | grep -iE 'azure.*openai|ai.*agent|endpoint|client.*initialized|test.*successful' | tail -10 || echo "⚠️  No AI logs found yet"
+            
+            echo ""
+            echo "Testing AI client directly from backend container:"
+            sudo docker exec email-agent-backend-dev python3 << 'PYEOF' 2>&1 | head -30
+import sys
+sys.path.insert(0, '/app')
+try:
+    import config
+    print(f"AI_PROVIDER: {config.AI_PROVIDER}")
+    print(f"AZURE_OPENAI_KEY: {'SET' if config.AZURE_OPENAI_KEY else 'NOT SET'} ({len(config.AZURE_OPENAI_KEY) if config.AZURE_OPENAI_KEY else 0} chars)")
+    print(f"AZURE_OPENAI_ENDPOINT: {config.AZURE_OPENAI_ENDPOINT}")
+    print(f"AZURE_OPENAI_DEPLOYMENT: {config.AZURE_OPENAI_DEPLOYMENT}")
+    if config.AZURE_OPENAI_KEY and config.AZURE_OPENAI_ENDPOINT:
+        from openai import AzureOpenAI
+        client = AzureOpenAI(
+            api_key=config.AZURE_OPENAI_KEY,
+            api_version=config.AZURE_OPENAI_API_VERSION,
+            azure_endpoint=config.AZURE_OPENAI_ENDPOINT
+        )
+        print("✅ Azure OpenAI client initialized")
+        response = client.chat.completions.create(
+            model=config.AZURE_OPENAI_DEPLOYMENT,
+            messages=[{'role': 'user', 'content': 'Say hello'}],
+            max_tokens=5
+        )
+        print(f"✅ AI test successful: {response.choices[0].message.content}")
+    else:
+        print("❌ Missing Azure OpenAI credentials")
+except Exception as e:
+    print(f"❌ AI test failed: {e}")
+    import traceback
+    traceback.print_exc()
+PYEOF
+            
+            echo ""
             echo "🔍 Verifying MongoDB connectivity:"
             echo "MongoDB container status:"
             sudo docker-compose -f docker-compose.dev.yml ps mongodb 2>/dev/null || echo "⚠️  Cannot check MongoDB container"
