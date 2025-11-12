@@ -118,7 +118,7 @@ class MongoDBManager:
     
     def save_emails(self, emails: List[Dict], account_id: int) -> Dict:
         """
-        Save emails to MongoDB
+        Save emails to MongoDB using bulk operations for better performance
         
         Args:
             emails: List of email dictionaries
@@ -131,57 +131,74 @@ class MongoDBManager:
             return {"error": "MongoDB not connected"}
         
         try:
-            inserted_count = 0
-            updated_count = 0
+            if not emails:
+                return {"success": True, "inserted": 0, "updated": 0, "total": 0}
+            
+            from pymongo import UpdateOne
+            
+            # Prepare bulk operations
+            bulk_ops = []
+            now = datetime.utcnow()
             
             for email in emails:
                 # Add metadata
                 email['account_id'] = account_id
-                email['saved_at'] = datetime.utcnow()
+                email['saved_at'] = now
                 
                 # Create sortable date string from email date
-                # Convert email date to ISO format for proper sorting
-                if 'date' in email and not 'date_str' in email:
+                if 'date' in email and 'date_str' not in email:
                     try:
-                        # Parse email date and convert to ISO format (YYYY-MM-DD HH:MM:SS)
                         email_date = parsedate_to_datetime(email['date'])
                         email['date_str'] = email_date.strftime('%Y-%m-%d %H:%M:%S')
                     except:
-                        # Fallback: use saved_at time
-                        email['date_str'] = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+                        email['date_str'] = now.strftime('%Y-%m-%d %H:%M:%S')
                 
                 # Use message_id as unique identifier
                 message_id = email.get('message_id')
                 
                 if message_id:
-                    # Update if exists, insert if not (upsert)
-                    result = self.emails_collection.update_one(
-                        {
-                            'message_id': message_id,
-                            'account_id': account_id
-                        },
-                        {'$set': email},
-                        upsert=True
+                    # Use bulk upsert operation
+                    bulk_ops.append(
+                        UpdateOne(
+                            {
+                                'message_id': message_id,
+                                'account_id': account_id
+                            },
+                            {'$set': email},
+                            upsert=True
+                        )
                     )
-                    
-                    if result.upserted_id:
-                        inserted_count += 1
-                    elif result.modified_count > 0:
-                        updated_count += 1
                 else:
-                    # No message_id, just insert
-                    self.emails_collection.insert_one(email)
-                    inserted_count += 1
+                    # No message_id, use insert operation
+                    # Create a temporary unique identifier
+                    temp_id = f"{account_id}_{now.timestamp()}_{len(bulk_ops)}"
+                    bulk_ops.append(
+                        UpdateOne(
+                            {'_temp_id': temp_id},
+                            {'$setOnInsert': {**email, '_temp_id': temp_id}},
+                            upsert=True
+                        )
+                    )
             
-            return {
-                "success": True,
-                "inserted": inserted_count,
-                "updated": updated_count,
-                "total": inserted_count + updated_count
-            }
+            # Execute bulk operation (much faster than individual operations)
+            if bulk_ops:
+                result = self.emails_collection.bulk_write(bulk_ops, ordered=False)
+                inserted_count = result.upserted_count
+                updated_count = result.modified_count
+                
+                return {
+                    "success": True,
+                    "inserted": inserted_count,
+                    "updated": updated_count,
+                    "total": inserted_count + updated_count
+                }
+            else:
+                return {"success": True, "inserted": 0, "updated": 0, "total": 0}
         
         except Exception as e:
             print(f"Error saving emails to MongoDB: {e}")
+            import traceback
+            traceback.print_exc()
             return {"error": str(e)}
     
     def save_ai_analysis(self, email_message_id: str, account_id: int, 
