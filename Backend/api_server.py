@@ -662,6 +662,20 @@ async def get_emails(
                         thread.start()
                         mongo_result = {"saved": len(emails), "async": True}  # Return immediately
                     
+                    # Add emails to vector store for semantic search (async, don't block)
+                    if emails and vector_store.collection:
+                        import threading
+                        def add_to_vector_async():
+                            try:
+                                result = vector_store.add_emails(emails)
+                                print(f"✓ Added {result.get('added', 0)} emails to vector store for semantic search")
+                            except Exception as e:
+                                print(f"⚠ Error adding emails to vector store: {e}")
+                        
+                        # Start async vector store update
+                        thread = threading.Thread(target=add_to_vector_async, daemon=True)
+                        thread.start()
+                    
                     return {
                         "success": True,
                         "count": len(emails),
@@ -751,6 +765,20 @@ async def get_emails(
             thread = threading.Thread(target=save_emails_async, daemon=True)
             thread.start()
             mongo_result = {"saved": len(emails), "async": True}  # Return immediately
+        
+        # Add emails to vector store for semantic search (async, don't block)
+        if emails and vector_store.collection:
+            import threading
+            def add_to_vector_async():
+                try:
+                    result = vector_store.add_emails(emails)
+                    print(f"✓ Added {result.get('added', 0)} emails to vector store for semantic search")
+                except Exception as e:
+                    print(f"⚠ Error adding emails to vector store: {e}")
+            
+            # Start async vector store update
+            thread = threading.Thread(target=add_to_vector_async, daemon=True)
+            thread.start()
         
         return {
             "success": True,
