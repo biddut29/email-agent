@@ -509,18 +509,18 @@ export default function EmailDashboard() {
       {/* Real-time notification listener */}
       <NotificationListener />
       
-      <div className="container mx-auto p-6 space-y-6">
+      <div className="container mx-auto p-4 sm:p-6 space-y-4 sm:space-y-6">
         {/* Header */}
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-4xl font-bold flex items-center gap-3">
-            <Mail className="w-10 h-10 text-primary" />
-            Email Agent Dashboard
+          <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold flex items-center gap-2 sm:gap-3">
+            <Mail className="w-6 h-6 sm:w-8 sm:h-8 lg:w-10 lg:h-10 text-primary" />
+            <span className="break-words">Email Agent Dashboard</span>
           </h1>
-          <p className="text-muted-foreground mt-2">
+          <p className="text-muted-foreground mt-2 text-sm sm:text-base">
             AI-powered email management system
           </p>
-          <div className="flex items-center gap-3 mt-1">
+          <div className="flex items-center gap-2 sm:gap-3 mt-1 flex-wrap">
             <Badge variant="outline" className="text-xs">
               FE: v{FRONTEND_VERSION}
             </Badge>
@@ -531,7 +531,7 @@ export default function EmailDashboard() {
             )}
           </div>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-4">
           {/* Account Manager - Hidden */}
           <div className="hidden">
             <AccountManager onAccountChange={handleAccountChange} />
@@ -540,34 +540,36 @@ export default function EmailDashboard() {
           {/* Status Card */}
           {healthStatus && (
             <Card>
-              <CardContent className="pt-6">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
+              <CardContent className="pt-4 sm:pt-6">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-                    <span className="text-sm font-medium">{healthStatus.email}</span>
+                    <span className="text-xs sm:text-sm font-medium break-all">{healthStatus.email}</span>
                     {healthStatus.ai_enabled && (
-                      <Badge variant="secondary" className="ml-2">
+                      <Badge variant="secondary" className="text-xs">
                         <Bot className="w-3 h-3 mr-1" />
                         AI Enabled
                       </Badge>
                     )}
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
                     <Button
                       onClick={toggleAutoReply}
                       variant={autoReplyEnabled ? "default" : "outline"}
                       size="sm"
-                      className={autoReplyEnabled ? "bg-green-600 hover:bg-green-700" : ""}
+                      className={`${autoReplyEnabled ? "bg-green-600 hover:bg-green-700" : ""} w-full sm:w-auto`}
                     >
                       <Bot className="w-4 h-4 mr-2" />
-                      {autoReplyEnabled ? "Auto-Reply ON" : "Auto-Reply OFF"}
+                      <span className="hidden sm:inline">{autoReplyEnabled ? "Auto-Reply ON" : "Auto-Reply OFF"}</span>
+                      <span className="sm:hidden">{autoReplyEnabled ? "ON" : "OFF"}</span>
                     </Button>
                     
                     {/* Custom Prompt Indicator */}
                     {customPrompt && (
-                      <Badge variant="outline" className="flex items-center gap-1">
+                      <Badge variant="outline" className="flex items-center gap-1 text-xs">
                         <FileText className="w-3 h-3" />
-                        Custom Prompt Set
+                        <span className="hidden sm:inline">Custom Prompt Set</span>
+                        <span className="sm:hidden">Custom</span>
                       </Badge>
                     )}
 
@@ -577,18 +579,20 @@ export default function EmailDashboard() {
                       variant="destructive"
                       size="sm"
                       disabled={deletingAccount}
-                      className="flex items-center gap-2"
+                      className="flex items-center gap-2 w-full sm:w-auto"
                       title="Delete this account and all its data"
                     >
                       {deletingAccount ? (
                         <>
                           <RefreshCw className="w-4 h-4 animate-spin" />
-                          Deleting...
+                          <span className="hidden sm:inline">Deleting...</span>
+                          <span className="sm:hidden">Deleting</span>
                         </>
                       ) : (
                         <>
                           <Trash2 className="w-4 h-4" />
-                          Delete Account
+                          <span className="hidden sm:inline">Delete Account</span>
+                          <span className="sm:hidden">Delete</span>
                         </>
                       )}
                     </Button>
@@ -603,7 +607,7 @@ export default function EmailDashboard() {
             variant="outline"
             size="sm"
             onClick={handleLogout}
-            className="flex items-center gap-2"
+            className="flex items-center gap-2 w-full sm:w-auto"
           >
             <LogOut className="w-4 h-4" />
             Logout
@@ -613,29 +617,31 @@ export default function EmailDashboard() {
 
       {/* Main Content */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-        <TabsList className="grid w-full grid-cols-4">
-          <TabsTrigger value="mongodb" className="flex items-center gap-2">
-            <Send className="w-4 h-4" />
-            Auto Replies
+        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4 gap-1 sm:gap-0">
+          <TabsTrigger value="mongodb" className="flex items-center gap-1 sm:gap-2 text-xs sm:text-sm">
+            <Send className="w-3 h-3 sm:w-4 sm:h-4" />
+            <span className="hidden sm:inline">Auto Replies</span>
+            <span className="sm:hidden">Replies</span>
           </TabsTrigger>
-          <TabsTrigger value="inbox" className="flex items-center gap-2">
-            <Inbox className="w-4 h-4" />
+          <TabsTrigger value="inbox" className="flex items-center gap-1 sm:gap-2 text-xs sm:text-sm">
+            <Inbox className="w-3 h-3 sm:w-4 sm:h-4" />
             Inbox
           </TabsTrigger>
-          <TabsTrigger value="chat" className="flex items-center gap-2">
-            <MessageSquare className="w-4 h-4" />
+          <TabsTrigger value="chat" className="flex items-center gap-1 sm:gap-2 text-xs sm:text-sm">
+            <MessageSquare className="w-3 h-3 sm:w-4 sm:h-4" />
             Chat
             {emails.length > 0 && (
-              <Badge variant="secondary" className="ml-1 h-5 px-1 text-xs">
+              <Badge variant="secondary" className="ml-1 h-4 sm:h-5 px-1 text-xs">
                 {emails.length}
               </Badge>
             )}
           </TabsTrigger>
-          <TabsTrigger value="prompt" className="flex items-center gap-2">
-            <FileText className="w-4 h-4" />
-            Custom Prompt
+          <TabsTrigger value="prompt" className="flex items-center gap-1 sm:gap-2 text-xs sm:text-sm">
+            <FileText className="w-3 h-3 sm:w-4 sm:h-4" />
+            <span className="hidden sm:inline">Custom Prompt</span>
+            <span className="sm:hidden">Prompt</span>
             {customPrompt && (
-              <Badge variant="secondary" className="ml-1 h-5 px-1 text-xs">
+              <Badge variant="secondary" className="ml-1 h-4 sm:h-5 px-1 text-xs">
                 Set
               </Badge>
             )}
@@ -653,7 +659,7 @@ export default function EmailDashboard() {
               </div>
               
               <Select value={dateFilter} onValueChange={setDateFilter}>
-                <SelectTrigger className="w-[200px]">
+                <SelectTrigger className="w-full sm:w-[200px]">
                   <SelectValue placeholder="Select time period" />
                 </SelectTrigger>
                 <SelectContent>
@@ -693,7 +699,7 @@ export default function EmailDashboard() {
                       <PopoverTrigger asChild>
                         <Button
                           variant="outline"
-                          className="w-[200px] justify-start text-left font-normal"
+                          className="w-full sm:w-[200px] justify-start text-left font-normal"
                         >
                           <CalendarIcon className="mr-2 h-4 w-4" />
                           {customDateFrom ? format(customDateFrom, 'PPP') : 'Pick a date'}
@@ -717,7 +723,7 @@ export default function EmailDashboard() {
                       <PopoverTrigger asChild>
                         <Button
                           variant="outline"
-                          className="w-[200px] justify-start text-left font-normal"
+                          className="w-full sm:w-[200px] justify-start text-left font-normal"
                         >
                           <CalendarIcon className="mr-2 h-4 w-4" />
                           {customDateTo ? format(customDateTo, 'PPP') : 'Pick a date'}
@@ -779,7 +785,7 @@ export default function EmailDashboard() {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <ScrollArea className="h-[600px] pr-4">
+                <ScrollArea className="h-[400px] sm:h-[500px] lg:h-[600px] pr-2 sm:pr-4">
                   {loadingEmails ? (
                     <div className="flex items-center justify-center h-[400px]">
                       <div className="text-center">
@@ -926,7 +932,7 @@ export default function EmailDashboard() {
               </CardHeader>
               <CardContent>
                 {selectedEmail ? (
-                  <ScrollArea className="h-[600px]">
+                  <ScrollArea className="h-[400px] sm:h-[500px] lg:h-[600px]">
                     <div className="space-y-6">
                       {/* Email Header */}
                       <div className="space-y-4">
