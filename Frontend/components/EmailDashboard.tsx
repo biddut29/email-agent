@@ -354,12 +354,29 @@ export default function EmailDashboard() {
       const { from, to } = getDateRange(dateFilter);
       const skip = (currentPage - 1) * emailsPerPage;
       
-      const response = await api.getMongoDBEmails(emailsPerPage, skip, from, to, false);
+      // Fetch emails first (required)
+      const emailsResponse = await api.getMongoDBEmails(emailsPerPage, skip, from, to, false);
       
-      if (response.success) {
-        setEmails(response.emails || []);
-        setTotalEmails(response.total || 0);
-        setHasMore(response.has_more || false);
+      if (emailsResponse.success) {
+        setEmails(emailsResponse.emails || []);
+        
+        // Try to get accurate count from count API (optional - fallback to emails response total)
+        let accurateTotal = emailsResponse.total || 0;
+        try {
+          const countResponse = await api.getMongoDBEmailsCount(from, to, false);
+          if (countResponse.success && countResponse.count !== undefined) {
+            accurateTotal = countResponse.count;
+          }
+        } catch (countError) {
+          // Count API failed, use total from emails response
+          console.warn('Count API failed, using total from emails response:', countError);
+        }
+        
+        setTotalEmails(accurateTotal);
+        
+        // Calculate has_more based on accurate total
+        const hasMoreEmails = (skip + (emailsResponse.emails?.length || 0)) < accurateTotal;
+        setHasMore(hasMoreEmails);
       } else {
         setEmails([]);
         setTotalEmails(0);
@@ -781,7 +798,7 @@ export default function EmailDashboard() {
                   )}
                 </CardTitle>
                 <CardDescription>
-                  Showing {emails.length > 0 ? (currentPage - 1) * emailsPerPage + 1 : 0} - {Math.min(currentPage * emailsPerPage, totalEmails)} of {totalEmails} emails
+                  Showing {emails.length > 0 ? (currentPage - 1) * emailsPerPage + 1 : 0} - {Math.min(currentPage * emailsPerPage, totalEmails)} of {totalEmails} emails (20 per page)
                 </CardDescription>
               </CardHeader>
               <CardContent>

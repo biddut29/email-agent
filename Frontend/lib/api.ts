@@ -338,7 +338,7 @@ class EmailAgentAPI {
 
   // Get emails from MongoDB
   async getMongoDBEmails(
-    limit: number = 50,
+    limit: number = 20,
     skip: number = 0,
     dateFrom?: string,
     dateTo?: string,
@@ -361,6 +361,33 @@ class EmailAgentAPI {
       limit: number;
       has_more: boolean;
     }>(`/api/mongodb/emails?${params}`);
+  }
+
+  async getMongoDBEmailsCount(
+    dateFrom?: string,
+    dateTo?: string,
+    unreadOnly: boolean = false,
+    accountId?: number
+  ) {
+    const params = new URLSearchParams({
+      unread_only: unreadOnly.toString(),
+    });
+
+    if (dateFrom) params.append('date_from', dateFrom);
+    if (dateTo) params.append('date_to', dateTo);
+    if (accountId) params.append('account_id', accountId.toString());
+
+    return this.request<{
+      success: boolean;
+      count: number;
+      account_id: number;
+      account_email: string;
+      filters: {
+        date_from?: string;
+        date_to?: string;
+        unread_only: boolean;
+      };
+    }>(`/api/mongodb/emails/count?${params}`);
   }
 
   // Re-fetch email from IMAP to update body

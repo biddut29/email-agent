@@ -2406,31 +2406,52 @@ async def get_mongodb_emails(
             unread_only=unread_only,
             exclude_bodies=True  # Exclude html_body and text_body for faster list loading
         )
+        print(f"🔍 get_mongodb_emails returned: {len(emails)} emails")
+        print(f"🚀 CHECKPOINT 1: Starting count calculation")
+        sys.stdout.flush()
         
-        # Get accurate total count with same filters as the query
+        # Get accurate total count for pagination (using same query filters)
+        # Build the same query used in get_emails to get accurate count
+        query = {"account_id": active_account['id']}
+        print(f"🚀 CHECKPOINT 2: Built base query: {query}")
+        sys.stdout.flush()
+        
+        # Add date filters if provided (same logic as in get_emails)
+        if date_from or date_to:
+            date_query = {}
+            if date_from:
+                date_from_start = f"{date_from} 00:00:00"
+                date_query['$gte'] = date_from_start
+            if date_to:
+                from datetime import datetime, timedelta
+                date_obj = datetime.strptime(date_to, "%Y-%m-%d")
+                next_day = date_obj + timedelta(days=1)
+                date_to_end = next_day.strftime("%Y-%m-%d 00:00:00")
+                date_query['$lt'] = date_to_end
+            
+            if date_query:
+                query['date_str'] = date_query
+        
+        # Add unread filter if needed
+        if unread_only:
+            query['is_read'] = False
+        
+        # Get accurate count using the same query
+        total_count = 0
         if mongodb_manager.emails_collection is not None:
-            count_query = {"account_id": active_account['id']}
-            
-            # Apply same date filters
-            if date_from or date_to:
-                date_query = {}
-                if date_from:
-                    date_query['$gte'] = f"{date_from} 00:00:00"
-                if date_to:
-                    from datetime import datetime, timedelta
-                    date_obj = datetime.strptime(date_to, "%Y-%m-%d")
-                    next_day = date_obj + timedelta(days=1)
-                    date_query['$lt'] = next_day.strftime("%Y-%m-%d 00:00:00")
-                if date_query:
-                    count_query['date_str'] = date_query
-            
-            # Apply unread filter
-            if unread_only:
-                count_query['is_read'] = False
-            
-            total_count = mongodb_manager.emails_collection.count_documents(count_query)
+            try:
+                total_count = mongodb_manager.emails_collection.count_documents(query)
+                print(f"✅ Accurate total count: {total_count} emails (query: {query})")
+            except Exception as count_error:
+                print(f"❌ Error in count_documents: {count_error}")
+                total_count = skip + len(emails) + (limit if len(emails) == limit else 0)
+                print(f"⚠️  Using fallback estimate: {total_count}")
         else:
-            total_count = len(emails)
+            # Fallback if collection not available
+            total_count = skip + len(emails) + (limit if len(emails) == limit else 0)
+            print(f"⚠️  MongoDB collection not available, using estimate: {total_count}")
+        
+        print(f"🔍 Final total_count value: {total_count}")
         
         return {
             "success": True,
