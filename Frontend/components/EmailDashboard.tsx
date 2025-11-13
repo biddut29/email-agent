@@ -1059,15 +1059,24 @@ export default function EmailDashboard() {
                             rows={8}
                             className="resize-none font-mono text-sm"
                           />
-                          <Button
+                          <button
                             onClick={handleSendReply}
                             disabled={loading || !replyBody.trim()}
-                            className="w-full gap-2"
-                            size="lg"
+                            className="w-full h-10 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 text-sm font-medium transition-all disabled:pointer-events-none disabled:opacity-50"
+                            style={{ 
+                              display: 'flex', 
+                              alignItems: 'center', 
+                              justifyContent: 'center',
+                              gap: '0.5rem',
+                              paddingLeft: '1rem',
+                              paddingRight: '1rem',
+                              width: '100%',
+                              textAlign: 'center'
+                            }}
                           >
-                            <Send className="w-4 h-4" />
-                            Send Reply
-                          </Button>
+                            <Send className="w-4 h-4" style={{ flexShrink: 0, margin: 0 }} />
+                            <span style={{ whiteSpace: 'nowrap', margin: 0, padding: 0 }}>Send Reply</span>
+                          </button>
                         </div>
                       </div>
                     </div>

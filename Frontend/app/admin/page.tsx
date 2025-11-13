@@ -382,7 +382,7 @@ export default function AdminPage() {
               onClick={handleDeleteAllAccounts} 
               variant="destructive"
               disabled={deletingAll}
-              className="text-red-600 hover:text-red-700 hover:bg-red-50 border-red-300"
+              className="text-white hover:text-white"
             >
               {deletingAll ? (
                 <>
