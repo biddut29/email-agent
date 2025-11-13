@@ -215,7 +215,7 @@ class GmailAPIClient:
             search_query = query or 'in:inbox'
             
             # Gmail API max is 500 per request
-            max_results_per_request = min(500, limit)
+            max_results_per_request = 500  # Always use 500 to maximize efficiency
             
             # Get message list with pagination
             all_message_ids = []
