@@ -5,7 +5,7 @@ Provides REST API endpoints for the frontend
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Cookie
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, RedirectResponse
+from fastapi.responses import StreamingResponse, RedirectResponse, JSONResponse
 from pydantic import BaseModel, EmailStr
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
@@ -64,6 +64,100 @@ app.add_middleware(
     expose_headers=["*"],
     max_age=3600,  # Cache preflight response for 1 hour
 )
+
+
+# Authentication Middleware - Validates session tokens on all requests
+# Public endpoints that don't require authentication
+PUBLIC_ENDPOINTS = {
+    "/",
+    "/api/health",
+    "/api/auth/login",
+    "/api/auth/login-password",
+    "/api/auth/callback",
+    "/api/auth/me",  # Auth check endpoint (validates token internally)
+    "/docs",
+    "/redoc",
+    "/openapi.json"
+}
+
+@app.middleware("http")
+async def authenticate_request(request: Request, call_next):
+    """
+    Global authentication middleware - validates session token for all protected endpoints
+    """
+    # Skip authentication for public endpoints and OPTIONS requests
+    if request.url.path in PUBLIC_ENDPOINTS or request.method == "OPTIONS":
+        return await call_next(request)
+    
+    # Skip auth for static files and docs
+    if request.url.path.startswith(("/static", "/docs", "/redoc")):
+        return await call_next(request)
+    
+    # Extract session token from multiple sources
+    session_token = None
+    
+    # Priority 1: Cookie
+    session_token = request.cookies.get('session_token')
+    
+    # Priority 2: Authorization header
+    if not session_token:
+        auth_header = request.headers.get('Authorization', '')
+        if auth_header.startswith('Bearer '):
+            session_token = auth_header.replace('Bearer ', '').strip()
+    
+    # Priority 3: Query parameter (for SSE and special cases)
+    if not session_token:
+        session_token = request.query_params.get('token')
+    
+    # Reject if no token provided
+    if not session_token:
+        return JSONResponse(
+            status_code=401,
+            content={
+                "detail": "Not authenticated",
+                "error": "No session token provided. Please login."
+            }
+        )
+    
+    # Validate token
+    try:
+        # Verify token signature and expiry
+        session_data = session_serializer.loads(session_token, max_age=604800)  # 7 days
+        
+        # Check if session exists in active_sessions
+        session = active_sessions.get(session_token)
+        
+        # If session not found but token is valid, recreate it from token data
+        # This handles cases where backend restarted and active_sessions was cleared
+        if not session:
+            # Recreate session from token data if token is still valid
+            session = {
+                'account_id': session_data.get('account_id'),
+                'email': session_data.get('email'),
+                'name': session_data.get('name', ''),
+                'created_at': session_data.get('created_at')
+            }
+            # Restore session in active_sessions
+            active_sessions[session_token] = session
+        
+        # Add session info to request state for use in endpoints
+        request.state.session = session
+        request.state.account_id = session['account_id']
+        request.state.email = session['email']
+        
+        # Token is valid, proceed with request
+        return await call_next(request)
+        
+    except Exception as e:
+        # Token is invalid (tampered, expired, or malformed)
+        return JSONResponse(
+            status_code=401,
+            content={
+                "detail": "Invalid session",
+                "error": f"Your session is invalid. Please login again."
+            }
+        )
+
 
 # Initialize email agent and chat agent globally
 email_agent = None
@@ -237,10 +331,15 @@ async def startup_event():
         notification_callback=broadcast_notification,
         auto_reply_enabled=auto_reply_enabled
     )
-    email_agent.start()
+    # Start email agent in background to avoid blocking startup
+    import threading
+    def start_email_agent_async():
+        email_agent.start()
+        # Start real-time email monitoring (checks every 2 seconds)
+        email_agent.start_monitoring(check_interval=2)
     
-    # Start real-time email monitoring (checks every 2 seconds)
-    email_agent.start_monitoring(check_interval=2)
+    thread = threading.Thread(target=start_email_agent_async, daemon=True)
+    thread.start()
     
     chat_agent = ChatAgent()
     print("✓ Email Agent API Server started")
@@ -564,16 +663,19 @@ def get_current_account_id(session_token: Optional[str] = Cookie(None)) -> Optio
     return None
 
 
-# Get emails
+# Get emails with automatic batch loading
 @app.get("/api/emails")
 async def get_emails(
-    limit: int = 10,
+    limit: int = 1000,  # Max total emails to fetch across all batches
     unread_only: bool = False,
     folder: str = "INBOX",
     date_from: Optional[str] = None,  # Format: YYYY-MM-DD
     date_to: Optional[str] = None      # Format: YYYY-MM-DD
 ):
-    """Get emails from inbox with optional date range filter"""
+    """
+    Get emails from inbox with optional date range filter.
+    Automatically handles batch loading to fetch ALL emails within the date range.
+    """
     try:
         if not email_agent:
             raise HTTPException(status_code=500, detail="Email agent not initialized")
@@ -645,10 +747,43 @@ async def get_emails(
                     
                     gmail_query = ' '.join(query_parts)
                     
-                    # Fetch emails via Gmail API
-                    print(f"📧 Fetching emails via Gmail API with query: {gmail_query}, limit: {limit}")
-                    emails = gmail_client.get_emails(limit=limit, query=gmail_query)
-                    print(f"📧 Gmail API returned {len(emails)} emails")
+                    # Fetch emails via Gmail API with batch loading
+                    print(f"📧 Starting Gmail API batch loading (max {limit} emails)")
+                    print(f"📧 Query: {gmail_query}")
+                    
+                    all_emails = []
+                    batch_size = min(500, limit)  # Gmail API max is 500 per request
+                    batch_num = 1
+                    
+                    while len(all_emails) < limit:
+                        remaining = limit - len(all_emails)
+                        fetch_count = min(batch_size, remaining)
+                        
+                        print(f"📧 Gmail API Batch {batch_num}: Fetching up to {fetch_count} emails...")
+                        
+                        batch_emails = gmail_client.get_emails(limit=fetch_count, query=gmail_query)
+                        
+                        if not batch_emails:
+                            print(f"📭 No more emails found. Total: {len(all_emails)}")
+                            break
+                        
+                        all_emails.extend(batch_emails)
+                        print(f"✅ Batch {batch_num}: Got {len(batch_emails)} emails (Total: {len(all_emails)})")
+                        
+                        # If we got fewer than requested, we've reached the end
+                        if len(batch_emails) < fetch_count:
+                            print(f"📭 Reached end of results. Total: {len(all_emails)}")
+                            break
+                        
+                        batch_num += 1
+                        
+                        # Safety limit: max 10 batches (5000 emails)
+                        if batch_num > 10:
+                            print(f"⚠️ Stopped at batch limit. Total: {len(all_emails)}")
+                            break
+                    
+                    emails = all_emails
+                    print(f"📧 Gmail API batch loading complete: {len(emails)} total emails")
                     
                     # Save emails to MongoDB (synchronously to ensure they're saved before response)
                     mongo_result = {"saved": 0}
@@ -665,12 +800,23 @@ async def get_emails(
                     if emails and vector_store.collection:
                         import threading
                         account_email_for_vector = active_account.get('email', '')
+                        account_id_for_vector = active_account['id']
+                        
+                        # Ensure vector store is set to the correct account
+                        vector_store.set_account(account_id_for_vector, account_email_for_vector, skip_count=True)
+                        
                         def add_to_vector_async():
                             try:
+                                print(f"🔄 Starting async vector store update for {len(emails)} emails...")
                                 result = vector_store.add_emails(emails, account_email=account_email_for_vector)
-                                print(f"✓ Added {result.get('added', 0)} emails to vector store for semantic search")
+                                added = result.get('added', 0)
+                                skipped = result.get('skipped', 0)
+                                total = result.get('total', 0)
+                                print(f"✅ Vector store update complete: Added {added} emails, Skipped {skipped} sent emails, Total in store: {total} (account_id: {account_id_for_vector})")
                             except Exception as e:
-                                print(f"⚠ Error adding emails to vector store: {e}")
+                                print(f"❌ Error adding emails to vector store: {e}")
+                                import traceback
+                                traceback.print_exc()
                         
                         # Start async vector store update
                         thread = threading.Thread(target=add_to_vector_async, daemon=True)
@@ -735,16 +881,59 @@ async def get_emails(
             date_obj = datetime.strptime(date_to, "%Y-%m-%d")
             search_criteria.append(f'BEFORE {date_obj.strftime("%d-%b-%Y")}')
         
-        # Get emails with date filter
+        # Get emails with date filter - IMAP batch loading
         search_query = " ".join(search_criteria) if search_criteria else None
-        print(f"📧 Fetching emails via IMAP - folder: {folder}, limit: {limit}, search: {search_query}, unread_only: {unread_only}")
+        print(f"📧 Starting IMAP batch loading (max {limit} emails)")
+        print(f"📧 Search criteria: {search_query if search_query else 'None (recent emails)'}")
         
-        if search_criteria:
-            emails = receiver.search_emails(" ".join(search_criteria), folder=folder, limit=limit)
-        else:
-            emails = receiver.get_emails(folder=folder, limit=limit, unread_only=unread_only)
+        all_emails = []
+        batch_size = 200  # IMAP can handle batches of 200 well
+        batch_num = 1
         
-        print(f"📧 IMAP returned {len(emails)} emails")
+        # For IMAP, we'll fetch in batches by using skip/limit approach
+        while len(all_emails) < limit:
+            remaining = limit - len(all_emails)
+            fetch_count = min(batch_size, remaining)
+            skip = len(all_emails)  # Skip emails we've already fetched
+            
+            print(f"📧 IMAP Batch {batch_num}: Fetching {fetch_count} emails (skip {skip})...")
+            
+            if search_criteria:
+                batch_emails = receiver.search_emails(
+                    " ".join(search_criteria), 
+                    folder=folder, 
+                    limit=fetch_count,
+                    skip=skip
+                )
+            else:
+                batch_emails = receiver.get_emails(
+                    folder=folder, 
+                    limit=fetch_count, 
+                    unread_only=unread_only,
+                    skip=skip
+                )
+            
+            if not batch_emails:
+                print(f"📭 No more emails found. Total: {len(all_emails)}")
+                break
+            
+            all_emails.extend(batch_emails)
+            print(f"✅ Batch {batch_num}: Got {len(batch_emails)} emails (Total: {len(all_emails)})")
+            
+            # If we got fewer than requested, we've reached the end
+            if len(batch_emails) < fetch_count:
+                print(f"📭 Reached end of results. Total: {len(all_emails)}")
+                break
+            
+            batch_num += 1
+            
+            # Safety limit: max 10 batches (2000 emails)
+            if batch_num > 10:
+                print(f"⚠️ Stopped at batch limit. Total: {len(all_emails)}")
+                break
+        
+        emails = all_emails
+        print(f"📧 IMAP batch loading complete: {len(emails)} total emails")
         
         # Save emails to MongoDB (synchronously to ensure they're saved before response)
         mongo_result = {"saved": 0}
@@ -761,12 +950,23 @@ async def get_emails(
         if emails and vector_store.collection:
             import threading
             account_email_for_vector = active_account.get('email', '')
+            account_id_for_vector = active_account['id']
+            
+            # Ensure vector store is set to the correct account
+            vector_store.set_account(account_id_for_vector, account_email_for_vector, skip_count=True)
+            
             def add_to_vector_async():
                 try:
+                    print(f"🔄 Starting async vector store update for {len(emails)} emails...")
                     result = vector_store.add_emails(emails, account_email=account_email_for_vector)
-                    print(f"✓ Added {result.get('added', 0)} emails to vector store for semantic search")
+                    added = result.get('added', 0)
+                    skipped = result.get('skipped', 0)
+                    total = result.get('total', 0)
+                    print(f"✅ Vector store update complete: Added {added} emails, Skipped {skipped} sent emails, Total in store: {total} (account_id: {account_id_for_vector})")
                 except Exception as e:
-                    print(f"⚠ Error adding emails to vector store: {e}")
+                    print(f"❌ Error adding emails to vector store: {e}")
+                    import traceback
+                    traceback.print_exc()
             
             # Start async vector store update
             thread = threading.Thread(target=add_to_vector_async, daemon=True)
@@ -1494,14 +1694,62 @@ async def chat_message(request: ChatRequest):
         if not chat_agent:
             raise HTTPException(status_code=500, detail="Chat agent not initialized")
         
-        # Always use vector search (RAG) if vector store has emails
+        # Always use vector search (RAG) if vector store has emails for the active account
         # This enables semantic search for better context-aware responses
-        use_vector = vector_store.collection and vector_store.collection.count() > 0
+        use_vector = False
+        vector_count = 0
+        
+        if vector_store.collection:
+            # Check if vector store has emails for the active account
+            active_account = account_manager.get_active_account()
+            if active_account:
+                # Ensure vector store is set to the correct account
+                vector_store.set_account(active_account['id'], active_account.get('email'), skip_count=True)
+                
+                # Quick check: try to get at least one email for this account
+                try:
+                    results = vector_store.collection.get(
+                        where={"account_id": str(active_account['id'])},
+                        limit=1
+                    )
+                    if results.get('ids') and len(results['ids']) > 0:
+                        use_vector = True
+                        # Get count for logging (async, don't block)
+                        try:
+                            all_results = vector_store.collection.get(
+                                where={"account_id": str(active_account['id'])},
+                                limit=None
+                            )
+                            vector_count = len(all_results.get('ids', [])) if all_results.get('ids') else 0
+                        except:
+                            vector_count = 1  # At least one exists
+                except Exception as e:
+                    print(f"⚠️ Error checking vector store: {e}")
+        
+        # Get MongoDB count for accurate total
+        mongodb_count = 0
+        if active_account:
+            try:
+                mongodb_count = mongodb_manager.emails_collection.count_documents(
+                    {"account_id": active_account['id']}
+                )
+            except Exception as e:
+                print(f"⚠️ Error getting MongoDB count: {e}")
         
         if use_vector:
-            print(f"🤖 Chat using RAG (vector search) - {vector_store.collection.count()} emails in vector store")
+            print(f"🤖 Chat using RAG (vector search) - {vector_count} emails in vector store, {mongodb_count} in MongoDB for account {active_account['id']}")
+        else:
+            print(f"⚠️ Chat NOT using vector search - no emails found in vector store")
         
-        result = chat_agent.chat(request.message, include_context=request.include_context, use_vector_search=use_vector)
+        # Use MongoDB count as the authoritative total (it's the source of truth)
+        total_email_count = mongodb_count if mongodb_count > 0 else vector_count
+        
+        result = chat_agent.chat(
+            request.message, 
+            include_context=request.include_context, 
+            use_vector_search=use_vector,
+            total_email_count=total_email_count
+        )
         
         return {
             "success": not result.get("error", False),
@@ -1548,6 +1796,66 @@ async def reset_chat():
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/vector/count")
+async def get_vector_count():
+    """Get the count of emails in vector database for the active account"""
+    try:
+        active_account = account_manager.get_active_account()
+        if not active_account:
+            print("❌ Vector count: No active account")
+            return {
+                "success": False,
+                "count": 0,
+                "error": "No active account"
+            }
+        
+        if not vector_store.collection:
+            print("❌ Vector count: Vector store not initialized")
+            return {
+                "success": False,
+                "count": 0,
+                "error": "Vector store not initialized"
+            }
+        
+        # Ensure vector store is set to the correct account
+        vector_store.set_account(active_account['id'], active_account.get('email'), skip_count=True)
+        
+        # Count emails for this account in vector store
+        try:
+            account_id_str = str(active_account['id'])
+            print(f"🔍 Vector count: Counting emails for account_id='{account_id_str}'")
+            
+            # Get all emails for this account (ChromaDB doesn't have efficient count, so we get all IDs)
+            results = vector_store.collection.get(
+                where={"account_id": account_id_str},
+                limit=None  # Get all to count accurately
+            )
+            count = len(results.get('ids', [])) if results.get('ids') else 0
+            print(f"✅ Vector count: Found {count} emails for account {active_account['id']}")
+        except Exception as e:
+            print(f"❌ Error counting vector emails: {e}")
+            import traceback
+            traceback.print_exc()
+            count = 0
+        
+        return {
+            "success": True,
+            "count": count,
+            "account_id": active_account['id'],
+            "account_email": active_account.get('email', '')
+        }
+    
+    except Exception as e:
+        print(f"❌ Vector count endpoint error: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "success": False,
+            "count": 0,
+            "error": str(e)
+        }
 
 
 @app.get("/api/chat/history")
