@@ -300,13 +300,6 @@ class EmailAgentAPI {
     }>('/api/search/stats');
   }
 
-  async getVectorCount() {
-    return this.request<{
-      success: boolean;
-      count: number;
-    }>('/api/vector/count');
-  }
-
   async clearVectorStore() {
     return this.request<{
       success: boolean;
