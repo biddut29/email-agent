@@ -71,6 +71,7 @@ export default function EmailDashboard() {
   const [hasMore, setHasMore] = useState(false);
   const [loadingEmails, setLoadingEmails] = useState(false);
   const [deletingAccount, setDeletingAccount] = useState<boolean>(false);
+  const [vectorCount, setVectorCount] = useState<number>(0);
   const emailsPerPage = 20;
 
   // Load health status on mount
@@ -85,6 +86,34 @@ export default function EmailDashboard() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, currentPage, dateFilter, customDateFrom, customDateTo]);
+
+  // Fetch vector database count for chat tab badge
+  useEffect(() => {
+    const fetchVectorCount = async () => {
+      try {
+        console.log('🔍 Fetching vector count...');
+        const response = await api.getVectorCount();
+        console.log('📊 Vector count response:', response);
+        if (response.success) {
+          console.log(`✅ Vector count: ${response.count}`);
+          setVectorCount(response.count);
+        } else {
+          console.warn('⚠️ Vector count fetch failed:', response.error);
+          setVectorCount(0);
+        }
+      } catch (error) {
+        console.error('❌ Failed to fetch vector count:', error);
+        setVectorCount(0);
+      }
+    };
+    
+    // Always fetch on mount, when switching to chat tab, or when emails are loaded
+    fetchVectorCount();
+    
+    // Also refresh periodically (every 10 seconds) to catch new emails added to vector
+    const interval = setInterval(fetchVectorCount, 10000);
+    return () => clearInterval(interval);
+  }, [activeTab, emails.length]);
 
   // Sync custom prompt value when switching to prompt tab
   useEffect(() => {
@@ -299,8 +328,9 @@ export default function EmailDashboard() {
     try {
       const { from, to } = getDateRange(dateFilter);
       
-      // Use lower limit for faster loading
-      const limit = 50;
+      // Backend now handles batch loading - request up to 1000 emails
+      // Backend will automatically fetch all emails in the date range in batches
+      const limit = 1000;
       
       const response = await api.getEmails(limit, unreadOnly, 'INBOX', from, to);
       
@@ -330,7 +360,10 @@ export default function EmailDashboard() {
         
         alert(`No emails found ${dateRangeText}. Try selecting a different date range (e.g., "Last 7 Days" or "Last 30 Days") or check if your email account has emails.`);
       } else {
-        alert(`Loaded ${emailCount} email${emailCount === 1 ? '' : 's'}. They have been saved to MongoDB and vector database.`);
+        // Show success message with method used
+        const method = responseWithError.method || 'unknown';
+        const methodText = method === 'gmail_api' ? 'Gmail API' : method === 'imap' ? 'IMAP' : method;
+        alert(`✅ Loaded ${emailCount} email${emailCount === 1 ? '' : 's'} via ${methodText}. They have been saved to MongoDB and vector database.`);
         
         // Wait a moment for async save to complete, then reload from MongoDB
         // This ensures the newly loaded emails are visible in the inbox
@@ -647,9 +680,9 @@ export default function EmailDashboard() {
           <TabsTrigger value="chat" className="flex items-center gap-1 sm:gap-2 text-xs sm:text-sm">
             <MessageSquare className="w-3 h-3 sm:w-4 sm:h-4" />
             Chat
-            {emails.length > 0 && (
+            {vectorCount > 0 && (
               <Badge variant="secondary" className="ml-1 h-4 sm:h-5 px-1 text-xs">
-                {emails.length}
+                {vectorCount}
               </Badge>
             )}
           </TabsTrigger>
@@ -1124,7 +1157,7 @@ export default function EmailDashboard() {
 
         {/* Chat Tab */}
         <TabsContent value="chat" className="space-y-4">
-          <EmailChat emails={emails} />
+          <EmailChat emails={emails} vectorCount={vectorCount} />
         </TabsContent>
 
         {/* Custom Prompt Tab */}
