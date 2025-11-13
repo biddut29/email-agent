@@ -195,13 +195,14 @@ class GmailAPIClient:
             print(f"Error getting new emails: {e}")
             return []
     
-    def get_emails(self, limit: int = 10, query: str = None) -> List[Dict]:
+    def get_emails(self, limit: int = 10, query: str = None, skip: int = 0) -> List[Dict]:
         """
-        Get emails from Gmail
+        Get emails from Gmail with pagination support
         
         Args:
-            limit: Maximum number of emails
+            limit: Maximum number of emails to return
             query: Gmail search query (e.g., "in:inbox")
+            skip: Number of emails to skip (for pagination)
             
         Returns:
             List of email dictionaries
@@ -213,21 +214,67 @@ class GmailAPIClient:
             # Build query
             search_query = query or 'in:inbox'
             
-            # Get message list
-            results = self.service.users().messages().list(
-                userId='me',
-                q=search_query,
-                maxResults=limit
-            ).execute()
+            # Gmail API max is 500 per request
+            max_results_per_request = min(500, limit)
             
-            messages = results.get('messages', [])
-            if not messages:
+            # Get message list with pagination
+            all_message_ids = []
+            page_token = None
+            fetched_count = 0
+            
+            # First, skip emails if needed by fetching pages until we reach skip count
+            if skip > 0:
+                skip_page_token = None
+                skipped = 0
+                while skipped < skip:
+                    skip_results = self.service.users().messages().list(
+                        userId='me',
+                        q=search_query,
+                        maxResults=min(500, skip - skipped),
+                        pageToken=skip_page_token
+                    ).execute()
+                    
+                    skip_messages = skip_results.get('messages', [])
+                    skipped += len(skip_messages)
+                    skip_page_token = skip_results.get('nextPageToken')
+                    
+                    if not skip_page_token or not skip_messages:
+                        break
+                
+                # Use the page token from skip as starting point
+                page_token = skip_page_token
+            
+            # Now fetch the actual emails we need
+            while fetched_count < limit:
+                remaining = limit - fetched_count
+                fetch_size = min(max_results_per_request, remaining)
+                
+                results = self.service.users().messages().list(
+                    userId='me',
+                    q=search_query,
+                    maxResults=fetch_size,
+                    pageToken=page_token
+                ).execute()
+                
+                messages = results.get('messages', [])
+                if not messages:
+                    break
+                
+                all_message_ids.extend([msg['id'] for msg in messages])
+                fetched_count += len(messages)
+                
+                # Check for next page
+                page_token = results.get('nextPageToken')
+                if not page_token:
+                    break
+            
+            if not all_message_ids:
                 return []
             
             # Fetch full message details
             emails = []
-            for msg in messages:
-                email_data = self._fetch_message(msg['id'])
+            for msg_id in all_message_ids:
+                email_data = self._fetch_message(msg_id)
                 if email_data:
                     emails.append(email_data)
             
@@ -235,6 +282,8 @@ class GmailAPIClient:
             
         except Exception as e:
             print(f"Error getting emails: {e}")
+            import traceback
+            traceback.print_exc()
             return []
     
     def _fetch_message(self, msg_id: str) -> Optional[Dict]:
