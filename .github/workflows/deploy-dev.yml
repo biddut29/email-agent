@@ -400,13 +400,13 @@ jobs:
             
             echo ""
             echo "Testing AI client directly from backend container:"
-            sudo docker exec email-agent-backend-dev python3 << 'PYEOF' 2>&1 | head -30
+            sudo docker exec email-agent-backend-dev bash -c 'python3 << EOF
 import sys
-sys.path.insert(0, '/app')
+sys.path.insert(0, "/app")
 try:
     import config
     print(f"AI_PROVIDER: {config.AI_PROVIDER}")
-    print(f"AZURE_OPENAI_KEY: {'SET' if config.AZURE_OPENAI_KEY else 'NOT SET'} ({len(config.AZURE_OPENAI_KEY) if config.AZURE_OPENAI_KEY else 0} chars)")
+    print(f"AZURE_OPENAI_KEY: {\"SET\" if config.AZURE_OPENAI_KEY else \"NOT SET\"} ({len(config.AZURE_OPENAI_KEY) if config.AZURE_OPENAI_KEY else 0} chars)")
     print(f"AZURE_OPENAI_ENDPOINT: {config.AZURE_OPENAI_ENDPOINT}")
     print(f"AZURE_OPENAI_DEPLOYMENT: {config.AZURE_OPENAI_DEPLOYMENT}")
     if config.AZURE_OPENAI_KEY and config.AZURE_OPENAI_ENDPOINT:
@@ -419,7 +419,7 @@ try:
         print("✅ Azure OpenAI client initialized")
         response = client.chat.completions.create(
             model=config.AZURE_OPENAI_DEPLOYMENT,
-            messages=[{'role': 'user', 'content': 'Say hello'}],
+            messages=[{"role": "user", "content": "Say hello"}],
             max_tokens=5
         )
         print(f"✅ AI test successful: {response.choices[0].message.content}")
@@ -429,7 +429,8 @@ except Exception as e:
     print(f"❌ AI test failed: {e}")
     import traceback
     traceback.print_exc()
-PYEOF
+EOF
+' 2>&1 | head -30 || echo "⚠️  AI test failed or credentials not configured"
             
             echo ""
             echo "🔍 Verifying MongoDB connectivity:"
