@@ -472,9 +472,34 @@ Best regards,
             from_email = email_data.get('from', '')
             from_name = from_email.split('<')[0].strip() if '<' in from_email else from_email.split('@')[0]
             
-            # Get sender's email from config
-            sender_email = config.EMAIL_ADDRESS if (hasattr(config, 'EMAIL_ADDRESS') and config.EMAIL_ADDRESS) else ''
-            sender_name = sender_email.split('@')[0].replace('.', ' ').title() if sender_email else 'User'
+            # FIRST: Check if sender_name is already in email_data (set by email_agent.py)
+            sender_name = email_data.get('sender_name', '') if isinstance(email_data, dict) else ''
+            
+            # If sender_name not found, get from email address
+            if not sender_name:
+                # Get sender's email from config or from reply_account if available
+                sender_email = config.EMAIL_ADDRESS if (hasattr(config, 'EMAIL_ADDRESS') and config.EMAIL_ADDRESS) else ''
+                
+                # Try to get sender name from email_data if available (for auto-replies)
+                if 'reply_account' in email_data and email_data.get('reply_account'):
+                    reply_account = email_data['reply_account']
+                    sender_email = reply_account.get('email', sender_email)
+                
+                # Extract sender name from email address
+                if sender_email:
+                    sender_name = sender_email.split('@')[0].replace('.', ' ').replace('_', ' ').title()
+                else:
+                    sender_name = 'User'  # Last resort fallback
+            else:
+                # sender_name already set, get sender_email for logging
+                sender_email = ''
+                if 'reply_account' in email_data and email_data.get('reply_account'):
+                    sender_email = email_data['reply_account'].get('email', '')
+                if not sender_email:
+                    sender_email = config.EMAIL_ADDRESS if (hasattr(config, 'EMAIL_ADDRESS') and config.EMAIL_ADDRESS) else ''
+            
+            # Log sender name for debugging
+            print(f"📝 Using sender name: '{sender_name}' (from email: {sender_email or 'N/A'})")
             
             prompt = f"""You are an expert email writing assistant that helps draft natural, conversational email replies. You write in a clear, concise tone that matches the sender's communication style.
 
@@ -554,14 +579,14 @@ Response:"""
                 response = self.client.chat.completions.create(
                     model=self.azure_deployment,
                     messages=[
-                        {"role": "system", "content": "You are an expert email writing assistant. You write natural, conversational email replies. CRITICAL RULES: NEVER start with 'Thank you for your email', 'I see you reached out about...', or 'How can I help you today?'. NEVER use 'thank you for asking' - just answer directly. NEVER use 'Regarding your question' or 'I received your message'. Always answer questions directly and immediately, as if texting a friend. For 'How are you?' respond with 'I'm doing well! How about you?' - NOT 'I'm doing well, thank you for asking!'. For 'what is your health condition?' respond with 'All good here! How are you?' - NO formal prefaces. ALWAYS end with 'Best regards,' on a separate line, followed by the sender name on the next line. DO NOT include email addresses in signatures."},
+                        {"role": "system", "content": f"You are an expert email writing assistant. You write natural, conversational email replies. CRITICAL RULES: NEVER start with 'Thank you for your email', 'I see you reached out about...', or 'How can I help you today?'. NEVER use 'thank you for asking' - just answer directly. NEVER use 'Regarding your question' or 'I received your message'. Always answer questions directly and immediately, as if texting a friend. For 'How are you?' respond with 'I'm doing well! How about you?' - NOT 'I'm doing well, thank you for asking!'. For 'what is your health condition?' respond with 'All good here! How are you?' - NO formal prefaces. ALWAYS end with 'Best regards,' on a separate line, followed by '{sender_name}' (the actual sender name, NOT '[Your Name]' or any placeholder) on the next line. DO NOT include email addresses in signatures. NEVER use placeholders like '[Your Name]' - use the actual name: {sender_name}."},
                         {"role": "user", "content": prompt}
                     ],
                     temperature=1.0,  # Higher temperature for more natural, creative responses
                     max_tokens=400
                 )
                 response_text = response.choices[0].message.content.strip()
-                cleaned_response = self._clean_formal_phrases(response_text, body)
+                cleaned_response = self._clean_formal_phrases(response_text, body, email_data)
                 print(f"🔍 After cleanup - Original length: {len(response_text)}, Cleaned length: {len(cleaned_response)}")
                 return cleaned_response
             
@@ -569,14 +594,14 @@ Response:"""
                 response = self.client.chat.completions.create(
                     model="gpt-3.5-turbo",
                     messages=[
-                        {"role": "system", "content": "You are an expert email writing assistant. You write natural, conversational email replies. CRITICAL RULES: NEVER start with 'Thank you for your email', 'I see you reached out about...', or 'How can I help you today?'. NEVER use 'thank you for asking' - just answer directly. NEVER use 'Regarding your question' or 'I received your message'. Always answer questions directly and immediately, as if texting a friend. For 'How are you?' respond with 'I'm doing well! How about you?' - NOT 'I'm doing well, thank you for asking!'. For 'what is your health condition?' respond with 'All good here! How are you?' - NO formal prefaces. ALWAYS end with 'Best regards,' on a separate line, followed by the sender name on the next line. DO NOT include email addresses in signatures."},
+                        {"role": "system", "content": f"You are an expert email writing assistant. You write natural, conversational email replies. CRITICAL RULES: NEVER start with 'Thank you for your email', 'I see you reached out about...', or 'How can I help you today?'. NEVER use 'thank you for asking' - just answer directly. NEVER use 'Regarding your question' or 'I received your message'. Always answer questions directly and immediately, as if texting a friend. For 'How are you?' respond with 'I'm doing well! How about you?' - NOT 'I'm doing well, thank you for asking!'. For 'what is your health condition?' respond with 'All good here! How are you?' - NO formal prefaces. ALWAYS end with 'Best regards,' on a separate line, followed by '{sender_name}' (the actual sender name, NOT '[Your Name]' or any placeholder) on the next line. DO NOT include email addresses in signatures. NEVER use placeholders like '[Your Name]' - use the actual name: {sender_name}."},
                         {"role": "user", "content": prompt}
                     ],
                     temperature=1.0,
                     max_tokens=400
                 )
                 response_text = response.choices[0].message.content.strip()
-                cleaned_response = self._clean_formal_phrases(response_text, body)
+                cleaned_response = self._clean_formal_phrases(response_text, body, email_data)
                 print(f"🔍 After cleanup - Original length: {len(response_text)}, Cleaned length: {len(cleaned_response)}")
                 return cleaned_response
             
@@ -584,7 +609,7 @@ Response:"""
                 response = self.client.messages.create(
                     model="claude-3-haiku-20240307",
                     max_tokens=400,
-                    system="You are an expert email writing assistant. You write natural, conversational email replies. CRITICAL: NEVER start with 'Thank you for your email' or 'Hi [Name], Thank you for your email'. NEVER use 'Regarding your question' or 'I received your message'. Always answer questions directly and immediately, as if texting a friend. For 'what is your health condition?' respond with 'All good here! How are you?' - NO formal prefaces. ALWAYS end with 'Best regards,' on a separate line, followed by the sender name on the next line. DO NOT include email addresses in signatures.",
+                    system=f"You are an expert email writing assistant. You write natural, conversational email replies. CRITICAL: NEVER start with 'Thank you for your email' or 'Hi [Name], Thank you for your email'. NEVER use 'Regarding your question' or 'I received your message'. Always answer questions directly and immediately, as if texting a friend. For 'what is your health condition?' respond with 'All good here! How are you?' - NO formal prefaces. ALWAYS end with 'Best regards,' on a separate line, followed by '{sender_name}' (the actual sender name, NOT '[Your Name]' or any placeholder) on the next line. DO NOT include email addresses in signatures. NEVER use placeholders like '[Your Name]' - use the actual name: {sender_name}.",
                     messages=[{"role": "user", "content": prompt}]
                 )
                 response_text = response.content[0].text.strip()
@@ -658,7 +683,7 @@ Response:"""
         
         return max_score, reason
     
-    def _clean_formal_phrases(self, response_text: str, original_email_body: str = None) -> str:
+    def _clean_formal_phrases(self, response_text: str, original_email_body: str = None, email_data: Dict = None) -> str:
         """
         Remove formal template phrases and repeated original email content from AI response
         VERY AGGRESSIVE - removes ANY trace of formal templates or repeated content
@@ -796,7 +821,38 @@ Response:"""
             
             cleaned = cleaned.strip()
             
-            # Step 4.5: Ensure "Best regards," and name are on separate lines
+            # Step 4.5: Replace any placeholders like "[Your Name]" with actual sender name
+            # Get sender name from email_data parameter if available
+            sender_name = ''
+            if email_data is not None:
+                sender_name = email_data.get('sender_name', '') if isinstance(email_data, dict) else ''
+                
+                # If not found, try to get from reply_account
+                if not sender_name and 'reply_account' in email_data and email_data.get('reply_account'):
+                    reply_account = email_data['reply_account']
+                    sender_email = reply_account.get('email', '')
+                    if sender_email:
+                        sender_name = sender_email.split('@')[0].replace('.', ' ').replace('_', ' ').title()
+            
+            if not sender_name:
+                # Try to extract from config
+                sender_email = config.EMAIL_ADDRESS if (hasattr(config, 'EMAIL_ADDRESS') and config.EMAIL_ADDRESS) else ''
+                if sender_email:
+                    sender_name = sender_email.split('@')[0].replace('.', ' ').replace('_', ' ').title()
+            
+            if sender_name:
+                # Replace common placeholder patterns
+                cleaned = re.sub(r'\[Your\s+Name\]', sender_name, cleaned, flags=re.IGNORECASE)
+                cleaned = re.sub(r'\[YOUR\s+NAME\]', sender_name, cleaned)
+                cleaned = re.sub(r'\[your\s+name\]', sender_name, cleaned)
+                cleaned = re.sub(r'<Your\s+Name>', sender_name, cleaned, flags=re.IGNORECASE)
+                cleaned = re.sub(r'\{sender_name\}', sender_name, cleaned, flags=re.IGNORECASE)
+                cleaned = re.sub(r'\{Sender\s+Name\}', sender_name, cleaned, flags=re.IGNORECASE)
+                # Replace any remaining placeholder-like patterns at the end
+                cleaned = re.sub(r'\[.*?Name.*?\]\s*$', sender_name, cleaned, flags=re.IGNORECASE | re.MULTILINE)
+                print(f"🔧 Replaced placeholders with sender name: '{sender_name}'")
+            
+            # Step 4.6: Ensure "Best regards," and name are on separate lines
             # Handle various patterns and normalize to "Best regards,\nName"
             
             # Pattern 1: "Best regards, Name" -> "Best regards,\nName"
@@ -811,6 +867,63 @@ Response:"""
             
             # Pattern 4: "Best, Name" -> "Best regards,\nName"
             cleaned = re.sub(r'\bBest,\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)', r'Best regards,\n\1', cleaned, flags=re.IGNORECASE)
+            
+            # Step 4.7: Replace "User" with actual sender name (AFTER all other formatting)
+            # This must happen after Step 4.6 to ensure it doesn't get overwritten
+            # If sender_name is still not found or is "User", try one more time to get it
+            if not sender_name or sender_name == 'User':
+                # Try to get from account_manager if available (for API calls)
+                try:
+                    from account_manager import account_manager
+                    active_account = account_manager.get_active_account()
+                    if active_account:
+                        sender_email = active_account.get('email', '')
+                        if sender_email:
+                            sender_name = sender_email.split('@')[0].replace('.', ' ').replace('_', ' ').title()
+                            print(f"🔧 Cleanup: Retrieved sender name from account_manager: '{sender_name}'")
+                except Exception as e:
+                    print(f"⚠️  Cleanup: Could not get sender name from account_manager: {e}")
+            
+            # Always try to replace "User" if we have a valid sender name
+            if sender_name and sender_name != 'User':
+                # Replace "Best regards,\nUser" or "Best regards, User" with actual name (case-insensitive)
+                cleaned = re.sub(r'(Best\s+regards,)\s*\n?\s*User\s*$', rf'\1\n{sender_name}', cleaned, flags=re.IGNORECASE | re.MULTILINE)
+                # Replace standalone "User" at the end (on its own line, case-insensitive)
+                cleaned = re.sub(r'\n\s*User\s*$', f'\n{sender_name}', cleaned, flags=re.IGNORECASE | re.MULTILINE)
+                # Replace "User" that appears right after "Best regards," (on same line or next line)
+                cleaned = re.sub(r'Best\s+regards,\s*User\s*$', f'Best regards,\n{sender_name}', cleaned, flags=re.IGNORECASE | re.MULTILINE)
+                # More aggressive: replace any "User" (case-insensitive) at the very end of the response
+                cleaned_stripped = cleaned.rstrip()
+                if cleaned_stripped.lower().endswith('user'):
+                    # Find the last occurrence of "user" (case-insensitive) and replace it
+                    last_user_pos = cleaned_stripped.lower().rfind('user')
+                    if last_user_pos != -1:
+                        # Replace from the position of "user" to the end
+                        cleaned = cleaned_stripped[:last_user_pos] + sender_name
+                # Final check: if response ends with just "User" (any case) on its own line, replace it
+                cleaned = re.sub(r'\n\s*[Uu][Ss][Ee][Rr]\s*$', f'\n{sender_name}', cleaned, flags=re.MULTILINE)
+                print(f"🔧 Replaced 'User' with sender name: '{sender_name}'")
+            elif cleaned and 'User' in cleaned:
+                # Even if we don't have a valid sender name, try to get it one more time
+                print(f"⚠️  Cleanup: Found 'User' in response but sender_name is '{sender_name}' - attempting to retrieve...")
+                try:
+                    from account_manager import account_manager
+                    active_account = account_manager.get_active_account()
+                    if active_account:
+                        sender_email = active_account.get('email', '')
+                        if sender_email:
+                            final_sender_name = sender_email.split('@')[0].replace('.', ' ').replace('_', ' ').title()
+                            # Replace "User" with the retrieved name
+                            cleaned = re.sub(r'(Best\s+regards,)\s*\n?\s*User\s*$', rf'\1\n{final_sender_name}', cleaned, flags=re.IGNORECASE | re.MULTILINE)
+                            cleaned = re.sub(r'\n\s*User\s*$', f'\n{final_sender_name}', cleaned, flags=re.IGNORECASE | re.MULTILINE)
+                            cleaned_stripped = cleaned.rstrip()
+                            if cleaned_stripped.lower().endswith('user'):
+                                last_user_pos = cleaned_stripped.lower().rfind('user')
+                                if last_user_pos != -1:
+                                    cleaned = cleaned_stripped[:last_user_pos] + final_sender_name
+                            print(f"🔧 Replaced 'User' with sender name: '{final_sender_name}' (retrieved in cleanup)")
+                except Exception as e:
+                    print(f"⚠️  Cleanup: Could not replace 'User': {e}")
             
             # Step 5: If after all cleanup we have nothing meaningful, return a simple acknowledgment
             if not cleaned or len(cleaned) < 5:
