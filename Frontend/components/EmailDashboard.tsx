@@ -98,7 +98,7 @@ export default function EmailDashboard() {
           console.log(`✅ Vector count: ${response.count}`);
           setVectorCount(response.count);
         } else {
-          console.warn('⚠️ Vector count fetch failed:', response.error);
+          console.warn('⚠️ Vector count fetch failed');
           setVectorCount(0);
         }
       } catch (error) {
