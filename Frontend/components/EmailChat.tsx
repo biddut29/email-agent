@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
 import { Bot, Send, Trash2, Sparkles, User, Loader2 } from 'lucide-react';
+import { api } from '@/lib/api';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -15,15 +16,20 @@ interface Message {
 
 interface EmailChatProps {
   emails: any[];
+  vectorCount?: number;
 }
 
-export default function EmailChat({ emails }: EmailChatProps) {
+export default function EmailChat({ emails, vectorCount = 0 }: EmailChatProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  
+  // Debug: Log vectorCount when it changes
+  useEffect(() => {
+    console.log('📧 EmailChat - vectorCount changed:', vectorCount);
+  }, [vectorCount]);
 
   // Auto-scroll to bottom
   const scrollToBottom = () => {
@@ -34,21 +40,17 @@ export default function EmailChat({ emails }: EmailChatProps) {
     scrollToBottom();
   }, [messages]);
 
-  // Update chat context when emails change
+  // Update chat context when emails change or vector count changes
   useEffect(() => {
-    if (emails.length > 0) {
+    if (vectorCount > 0 || emails.length > 0) {
       updateChatContext();
       loadSuggestions();
     }
-  }, [emails]);
+  }, [emails, vectorCount]);
 
   const updateChatContext = async () => {
     try {
-      await fetch(`${apiUrl}/api/chat/context`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ emails }),
-      });
+      await api.updateChatContext(emails);
     } catch (error) {
       console.error('Failed to update chat context:', error);
     }
@@ -56,10 +58,9 @@ export default function EmailChat({ emails }: EmailChatProps) {
 
   const loadSuggestions = async () => {
     try {
-      const response = await fetch(`${apiUrl}/api/chat/suggestions`);
-      const data = await response.json();
+      const data = await api.getChatSuggestions();
       if (data.success) {
-        setSuggestions(data.suggestions);
+        setSuggestions(data.suggestions || []);
       }
     } catch (error) {
       console.error('Failed to load suggestions:', error);
@@ -77,16 +78,7 @@ export default function EmailChat({ emails }: EmailChatProps) {
     setLoading(true);
 
     try {
-      const response = await fetch(`${apiUrl}/api/chat/message`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: textToSend,
-          include_context: true,
-        }),
-      });
-
-      const data = await response.json();
+      const data = await api.sendChatMessage(textToSend, true);
 
       if (data.success) {
         const assistantMessage: Message = {
@@ -110,9 +102,7 @@ export default function EmailChat({ emails }: EmailChatProps) {
 
   const resetConversation = async () => {
     try {
-      await fetch(`${apiUrl}/api/chat/reset`, {
-        method: 'POST',
-      });
+      await api.resetChat();
       setMessages([]);
       loadSuggestions();
     } catch (error) {
@@ -166,8 +156,10 @@ export default function EmailChat({ emails }: EmailChatProps) {
                     Start a conversation!
                   </h3>
                   <p className="text-sm text-muted-foreground mb-4">
-                    {emails.length > 0
-                      ? `I have access to ${emails.length} email${emails.length !== 1 ? 's' : ''}. Ask me anything!`
+                    {vectorCount > 0
+                      ? `I have access to ${vectorCount} email${vectorCount !== 1 ? 's' : ''} in the vector database. Ask me anything!`
+                      : emails.length > 0
+                      ? `I have access to ${emails.length} email${emails.length !== 1 ? 's' : ''} (vector count: ${vectorCount}). Ask me anything!`
                       : 'Load some emails first, then ask me questions about them.'}
                   </p>
                 </div>
@@ -253,7 +245,7 @@ export default function EmailChat({ emails }: EmailChatProps) {
 
           {/* Input Area */}
           <div className="border-t p-4">
-            {emails.length === 0 && (
+            {vectorCount === 0 && emails.length === 0 && (
               <div className="mb-3 p-3 bg-yellow-50 dark:bg-yellow-950 border border-yellow-200 dark:border-yellow-800 rounded-lg">
                 <p className="text-xs text-yellow-800 dark:text-yellow-200 flex items-center gap-2">
                   <Sparkles className="w-3 h-3" />
@@ -265,19 +257,21 @@ export default function EmailChat({ emails }: EmailChatProps) {
             <div className="flex gap-2">
               <Input
                 placeholder={
-                  emails.length > 0
+                  vectorCount > 0
+                    ? 'Ask me about your emails...'
+                    : emails.length > 0
                     ? 'Ask me about your emails...'
                     : 'Load emails first to chat'
                 }
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyPress={handleKeyPress}
-                disabled={loading || emails.length === 0}
+                disabled={loading || (vectorCount === 0 && emails.length === 0)}
                 className="flex-1"
               />
               <Button
                 onClick={() => sendMessage()}
-                disabled={!input.trim() || loading || emails.length === 0}
+                disabled={!input.trim() || loading || (vectorCount === 0 && emails.length === 0)}
               >
                 {loading ? (
                   <Loader2 className="w-4 h-4 animate-spin" />
