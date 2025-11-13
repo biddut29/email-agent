@@ -754,21 +754,23 @@ async def get_emails(
                     all_emails = []
                     batch_size = min(500, limit)  # Gmail API max is 500 per request
                     batch_num = 1
+                    skip = 0
                     
                     while len(all_emails) < limit:
                         remaining = limit - len(all_emails)
                         fetch_count = min(batch_size, remaining)
                         
-                        print(f"📧 Gmail API Batch {batch_num}: Fetching up to {fetch_count} emails...")
+                        print(f"📧 Gmail API Batch {batch_num}: Fetching up to {fetch_count} emails (skip {skip})...")
                         
-                        batch_emails = gmail_client.get_emails(limit=fetch_count, query=gmail_query)
+                        batch_emails = gmail_client.get_emails(limit=fetch_count, query=gmail_query, skip=skip)
                         
                         if not batch_emails:
                             print(f"📭 No more emails found. Total: {len(all_emails)}")
                             break
                         
                         all_emails.extend(batch_emails)
-                        print(f"✅ Batch {batch_num}: Got {len(batch_emails)} emails (Total: {len(all_emails)})")
+                        skip += len(batch_emails)
+                        print(f"✅ Batch {batch_num}: Got {len(batch_emails)} emails (Total: {len(all_emails)}, Skip: {skip})")
                         
                         # If we got fewer than requested, we've reached the end
                         if len(batch_emails) < fetch_count:
