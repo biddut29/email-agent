@@ -796,16 +796,17 @@ export default function MongoDBViewer() {
                                     onClick={sendReply}
                                     disabled={sendingReply || !replyText.trim()}
                                     className="bg-green-600 hover:bg-green-700"
+                                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                                   >
                                     {sendingReply ? (
                                       <>
                                         <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-                                        Sending...
+                                        <span>Sending...</span>
                                       </>
                                     ) : (
                                       <>
                                         <Send className="w-4 h-4 mr-2" />
-                                        Send Reply
+                                        <span>Send Reply</span>
                                       </>
                                     )}
                                   </Button>
