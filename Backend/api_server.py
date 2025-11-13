@@ -638,31 +638,28 @@ async def get_emails(
                     gmail_query = ' '.join(query_parts)
                     
                     # Fetch emails via Gmail API
+                    print(f"📧 Fetching emails via Gmail API with query: {gmail_query}, limit: {limit}")
                     emails = gmail_client.get_emails(limit=limit, query=gmail_query)
+                    print(f"📧 Gmail API returned {len(emails)} emails")
                     
-                    # Save emails to MongoDB asynchronously (don't wait for it)
+                    # Save emails to MongoDB (synchronously to ensure they're saved before response)
                     mongo_result = {"saved": 0}
                     if emails and mongodb_manager.emails_collection is not None:
-                        # Save in background thread to not block response
-                        import threading
-                        def save_emails_async():
-                            try:
-                                result = mongodb_manager.save_emails(emails, active_account['id'])
-                                print(f"✓ Saved {result.get('total', 0)} emails to MongoDB via Gmail API (Inserted: {result.get('inserted', 0)}, Updated: {result.get('updated', 0)})")
-                            except Exception as e:
-                                print(f"⚠ Error saving emails to MongoDB: {e}")
-                        
-                        # Start async save
-                        thread = threading.Thread(target=save_emails_async, daemon=True)
-                        thread.start()
-                        mongo_result = {"saved": len(emails), "async": True}  # Return immediately
+                        try:
+                            result = mongodb_manager.save_emails(emails, active_account['id'])
+                            print(f"✓ Saved {result.get('total', 0)} emails to MongoDB via Gmail API (Inserted: {result.get('inserted', 0)}, Updated: {result.get('updated', 0)})")
+                            mongo_result = {"saved": result.get('total', 0), "inserted": result.get('inserted', 0), "updated": result.get('updated', 0)}
+                        except Exception as e:
+                            print(f"⚠ Error saving emails to MongoDB: {e}")
+                            mongo_result = {"saved": 0, "error": str(e)}
                     
                     # Add emails to vector store for semantic search (async, don't block)
                     if emails and vector_store.collection:
                         import threading
+                        account_email_for_vector = active_account.get('email', '')
                         def add_to_vector_async():
                             try:
-                                result = vector_store.add_emails(emails)
+                                result = vector_store.add_emails(emails, account_email=account_email_for_vector)
                                 print(f"✓ Added {result.get('added', 0)} emails to vector store for semantic search")
                             except Exception as e:
                                 print(f"⚠ Error adding emails to vector store: {e}")
@@ -731,34 +728,34 @@ async def get_emails(
             search_criteria.append(f'BEFORE {date_obj.strftime("%d-%b-%Y")}')
         
         # Get emails with date filter
+        search_query = " ".join(search_criteria) if search_criteria else None
+        print(f"📧 Fetching emails via IMAP - folder: {folder}, limit: {limit}, search: {search_query}, unread_only: {unread_only}")
+        
         if search_criteria:
             emails = receiver.search_emails(" ".join(search_criteria), folder=folder, limit=limit)
         else:
             emails = receiver.get_emails(folder=folder, limit=limit, unread_only=unread_only)
         
-        # Save emails to MongoDB asynchronously (don't wait for it)
+        print(f"📧 IMAP returned {len(emails)} emails")
+        
+        # Save emails to MongoDB (synchronously to ensure they're saved before response)
         mongo_result = {"saved": 0}
         if emails and mongodb_manager.emails_collection is not None:
-            # Save in background thread to not block response
-            import threading
-            def save_emails_async():
-                try:
-                    result = mongodb_manager.save_emails(emails, active_account['id'])
-                    print(f"✓ Saved {result.get('total', 0)} emails to MongoDB (Inserted: {result.get('inserted', 0)}, Updated: {result.get('updated', 0)})")
-                except Exception as e:
-                    print(f"⚠ Error saving emails to MongoDB: {e}")
-            
-            # Start async save
-            thread = threading.Thread(target=save_emails_async, daemon=True)
-            thread.start()
-            mongo_result = {"saved": len(emails), "async": True}  # Return immediately
+            try:
+                result = mongodb_manager.save_emails(emails, active_account['id'])
+                print(f"✓ Saved {result.get('total', 0)} emails to MongoDB (Inserted: {result.get('inserted', 0)}, Updated: {result.get('updated', 0)})")
+                mongo_result = {"saved": result.get('total', 0), "inserted": result.get('inserted', 0), "updated": result.get('updated', 0)}
+            except Exception as e:
+                print(f"⚠ Error saving emails to MongoDB: {e}")
+                mongo_result = {"saved": 0, "error": str(e)}
         
         # Add emails to vector store for semantic search (async, don't block)
         if emails and vector_store.collection:
             import threading
+            account_email_for_vector = active_account.get('email', '')
             def add_to_vector_async():
                 try:
-                    result = vector_store.add_emails(emails)
+                    result = vector_store.add_emails(emails, account_email=account_email_for_vector)
                     print(f"✓ Added {result.get('added', 0)} emails to vector store for semantic search")
                 except Exception as e:
                     print(f"⚠ Error adding emails to vector store: {e}")
@@ -861,7 +858,8 @@ async def load_emails_to_vector(
         
         # Index to vector store
         if vector_store.collection:
-            result = vector_store.add_emails(emails)
+            account_email_for_vector = active_account.get('email', '')
+            result = vector_store.add_emails(emails, account_email=account_email_for_vector)
             vector_count = result.get('added', 0)
             print(f"✓ Loaded {vector_count} emails from MongoDB to Vector Store")
         else:
@@ -1355,6 +1353,15 @@ async def generate_response(
         if not email_data:
             raise HTTPException(status_code=404, detail="Email not found")
         
+        # Add sender information to email_data for proper signature generation
+        active_account = account_manager.get_active_account()
+        if active_account:
+            sender_email = active_account.get('email', '')
+            if sender_email:
+                sender_name = sender_email.split('@')[0].replace('.', ' ').replace('_', ' ').title()
+                email_data['sender_name'] = sender_name
+                email_data['reply_account'] = active_account
+        
         ai_agent = email_agent.ai_agent
         response_body = ai_agent.generate_response(email_data, tone=tone)
         
@@ -1467,13 +1474,17 @@ async def list_folders():
 
 @app.post("/api/chat/message")
 async def chat_message(request: ChatRequest):
-    """Send a message to the chat agent with vector search enabled"""
+    """Send a message to the chat agent with vector search enabled (RAG)"""
     try:
         if not chat_agent:
             raise HTTPException(status_code=500, detail="Chat agent not initialized")
         
-        # Use vector search if vector store has emails
+        # Always use vector search (RAG) if vector store has emails
+        # This enables semantic search for better context-aware responses
         use_vector = vector_store.collection and vector_store.collection.count() > 0
+        
+        if use_vector:
+            print(f"🤖 Chat using RAG (vector search) - {vector_store.collection.count()} emails in vector store")
         
         result = chat_agent.chat(request.message, include_context=request.include_context, use_vector_search=use_vector)
         
@@ -2195,6 +2206,8 @@ async def get_mongodb_emails(
         date_to: End date filter (YYYY-MM-DD)
         unread_only: Only return unread emails
     """
+    import sys
+    print(f"🔍 API CALLED: get_mongodb_emails(date_from={date_from}, date_to={date_to}, limit={limit}, skip={skip})", file=sys.stderr, flush=True)
     try:
         # Get active account
         active_account = account_manager.get_active_account()
@@ -2206,6 +2219,38 @@ async def get_mongodb_emails(
         
         # Get emails from MongoDB with pagination
         # Exclude large HTML/text bodies for list view (much faster loading)
+        print(f"🔍 get_mongodb_emails called: account_id={active_account['id']} (type: {type(active_account['id'])}), date_from={date_from}, date_to={date_to}, limit={limit}, skip={skip}")
+        
+        # First, check total emails in MongoDB for this account (without date filter)
+        if mongodb_manager.emails_collection is not None:
+            total_count_no_filter = mongodb_manager.emails_collection.count_documents({"account_id": active_account['id']})
+            print(f"🔍 Total emails in MongoDB for account {active_account['id']}: {total_count_no_filter}")
+            
+            # Test the date filter query directly
+            if date_from and date_to:
+                from datetime import datetime, timedelta
+                date_from_start = f"{date_from} 00:00:00"
+                date_obj = datetime.strptime(date_to, "%Y-%m-%d")
+                next_day = date_obj + timedelta(days=1)
+                date_to_end = next_day.strftime("%Y-%m-%d 00:00:00")
+                test_query = {
+                    "account_id": active_account['id'],
+                    "date_str": {
+                        "$gte": date_from_start,
+                        "$lt": date_to_end
+                    }
+                }
+                test_count = mongodb_manager.emails_collection.count_documents(test_query)
+                print(f"🔍 Direct test query matches {test_count} emails: {test_query}")
+            
+            # Get a sample email to see date_str format
+            sample_email = mongodb_manager.emails_collection.find_one(
+                {"account_id": active_account['id']},
+                {"date_str": 1, "subject": 1, "date": 1}
+            )
+            if sample_email:
+                print(f"🔍 Sample email in MongoDB: date_str='{sample_email.get('date_str')}', subject='{sample_email.get('subject', 'N/A')[:50]}'")
+        
         emails = mongodb_manager.get_emails(
             account_id=active_account['id'],
             limit=limit,
@@ -2215,6 +2260,7 @@ async def get_mongodb_emails(
             unread_only=unread_only,
             exclude_bodies=True  # Exclude html_body and text_body for faster list loading
         )
+        print(f"🔍 get_mongodb_emails returned: {len(emails)} emails")
         
         # Get total count for pagination (optimized - skip expensive count_documents)
         # Use smart estimation based on returned results instead of slow exact count
@@ -2283,6 +2329,36 @@ async def clear_vector_store():
             raise HTTPException(status_code=500, detail=result['error'])
         
         return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/search/remove-sent-emails")
+async def remove_sent_emails_from_vector():
+    """Remove sent emails (auto-replies) from vector store"""
+    try:
+        active_account = account_manager.get_active_account()
+        if not active_account:
+            raise HTTPException(status_code=400, detail="No active account")
+        
+        account_email = active_account.get('email', '')
+        account_id = active_account.get('id')
+        
+        if not account_email:
+            raise HTTPException(status_code=400, detail="Account email not found")
+        
+        result = vector_store.remove_sent_emails(account_email, account_id)
+        
+        if 'error' in result:
+            raise HTTPException(status_code=500, detail=result['error'])
+        
+        return {
+            "success": True,
+            "deleted": result.get('deleted', 0),
+            "message": result.get('message', 'Sent emails removed')
+        }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
