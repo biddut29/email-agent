@@ -215,10 +215,22 @@ export default function EmailDashboard() {
         const remainingAccounts = result.remaining_accounts || 0;
         
         if (remainingAccounts === 0) {
-          // Last account deleted - logout
+          // Last account deleted - logout and redirect
+          try {
+            await api.logout();
+          } catch (logoutError) {
+            console.error('Logout error (continuing anyway):', logoutError);
+          }
+          
+          // Clear all local storage and session data
+          localStorage.clear();
+          sessionStorage.clear();
+          
+          // Show alert and force redirect
           alert('Account deleted successfully. This was the last account. Logging out...');
-          await api.logout();
-          router.push('/login');
+          
+          // Use window.location for a hard redirect
+          window.location.href = '/login';
         } else {
           // Not the last account - reload
           alert(`Account deleted successfully. ${remainingAccounts} account(s) remaining.`);
@@ -231,7 +243,6 @@ export default function EmailDashboard() {
     } catch (error) {
       console.error('Error deleting account:', error);
       alert(`Failed to delete account: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    } finally {
       setDeletingAccount(false);
     }
   };

@@ -483,27 +483,37 @@ class EmailVectorStore:
             return {"error": str(e)}
     
     def clear_account_emails(self, account_id: int) -> Dict:
-        """Clear all emails for a specific account from vector store"""
+        """Clear all emails for a specific account from vector store (handles large datasets with batching)"""
         if not self.collection:
             return {"error": "Vector store not initialized"}
         
         try:
-            results = self.collection.get(
-                where={"account_id": str(account_id)},
-                limit=10000
-            )
+            total_deleted = 0
+            batch_size = 10000  # Process in batches to handle large datasets
             
-            if results.get('ids') and len(results['ids']) > 0:
+            # Keep deleting in batches until no more emails are found
+            while True:
+                results = self.collection.get(
+                    where={"account_id": str(account_id)},
+                    limit=batch_size
+                )
+                
+                if not results.get('ids') or len(results['ids']) == 0:
+                    break
+                
+                # Delete this batch
                 self.collection.delete(ids=results['ids'])
-                return {
-                    "success": True,
-                    "deleted": len(results['ids'])
-                }
-            else:
-                return {
-                    "success": True,
-                    "deleted": 0
-                }
+                batch_count = len(results['ids'])
+                total_deleted += batch_count
+                
+                # If we got fewer than batch_size, we're done
+                if batch_count < batch_size:
+                    break
+            
+            return {
+                "success": True,
+                "deleted": total_deleted
+            }
         except Exception as e:
             return {"error": str(e)}
     

@@ -1676,20 +1676,50 @@ async def add_account(request: AccountAddRequest):
 @app.delete("/api/accounts/{account_id}")
 async def delete_account(account_id: int):
     """Delete an email account and all related data"""
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+    
     try:
+        print(f"🗑️  Starting deletion of account {account_id}...")
+        
+        # Run MongoDB and Vector DB deletions in parallel for better performance
+        executor = ThreadPoolExecutor(max_workers=2)
+        loop = asyncio.get_event_loop()
+        
         # Delete all emails from MongoDB for this account
         mongo_result = {"deleted": 0}
         if mongodb_manager.emails_collection is not None:
-            mongo_result = mongodb_manager.clear_account_emails(account_id)
-            if mongo_result.get('success'):
-                print(f"✓ Deleted {mongo_result.get('deleted', 0)} emails from MongoDB for account {account_id}")
+            mongo_future = loop.run_in_executor(
+                executor,
+                mongodb_manager.clear_account_emails,
+                account_id
+            )
+        else:
+            mongo_future = None
         
         # Delete all emails from vector store for this account
         vector_result = {"deleted": 0}
         if vector_store.collection:
-            vector_result = vector_store.clear_account_emails(account_id)
+            vector_future = loop.run_in_executor(
+                executor,
+                vector_store.clear_account_emails,
+                account_id
+            )
+        else:
+            vector_future = None
+        
+        # Wait for both deletions to complete
+        if mongo_future:
+            mongo_result = await mongo_future
+            if mongo_result.get('success'):
+                print(f"✓ Deleted {mongo_result.get('deleted', 0)} emails from MongoDB for account {account_id}")
+        
+        if vector_future:
+            vector_result = await vector_future
             if vector_result.get('success'):
                 print(f"✓ Deleted {vector_result.get('deleted', 0)} emails from vector store for account {account_id}")
+        
+        executor.shutdown(wait=False)
         
         # Finally, delete the account itself
         result = account_manager.remove_account(account_id)
@@ -1699,6 +1729,8 @@ async def delete_account(account_id: int):
         
         # Get remaining account count after deletion
         remaining_count = account_manager.get_account_count()
+        
+        print(f"✅ Account {account_id} deletion completed successfully")
         
         return {
             "success": True,
@@ -1710,6 +1742,7 @@ async def delete_account(account_id: int):
     except HTTPException:
         raise
     except Exception as e:
+        print(f"❌ Error deleting account {account_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
