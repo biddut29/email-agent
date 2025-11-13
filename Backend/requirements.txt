@@ -23,8 +23,8 @@ aiosmtplib==3.0.1
 
 # Vector Database for semantic search
 chromadb==0.4.22
-sentence-transformers==2.3.1
 numpy<2.0  # ChromaDB compatibility
+# Note: sentence-transformers removed - ChromaDB uses its own default embeddings
 
 # MongoDB for email storage
 pymongo==4.6.0

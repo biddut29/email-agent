@@ -281,7 +281,10 @@ jobs:
             sudo docker image prune -f || true
             
             # Only remove build cache older than 7 days (keep recent cache)
-            sudo docker builder prune -f --filter "until=168h" || true
+            echo "🧹 Cleaning up Docker resources to free disk space..."
+            sudo docker builder prune -af --filter "until=24h" || true
+            sudo docker system prune -af --volumes --filter "until=24h" || true
+            echo "✅ Docker cleanup completed"
             
             echo "📊 Disk space after cleanup:"
             df -h /
