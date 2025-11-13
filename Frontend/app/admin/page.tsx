@@ -52,6 +52,7 @@ export default function AdminPage() {
   const [stats, setStats] = useState<Stats>({ total: 0, active: 0, inactive: 0 });
   const [globalAutoReply, setGlobalAutoReply] = useState(false);
   const [cleaningVector, setCleaningVector] = useState(false);
+  const [deletingAll, setDeletingAll] = useState(false);
   const [editingPromptAccountId, setEditingPromptAccountId] = useState<number | null>(null);
   const [customPromptValue, setCustomPromptValue] = useState<string>('');
 
@@ -261,6 +262,59 @@ export default function AdminPage() {
     }
   };
 
+  const handleDeleteAllAccounts = async () => {
+    const confirmMessage = `⚠️ DANGER: This will PERMANENTLY DELETE:\n\n` +
+      `- ALL accounts\n` +
+      `- ALL emails in MongoDB\n` +
+      `- ALL replies in MongoDB\n` +
+      `- ALL vector database data\n\n` +
+      `This action CANNOT be undone!\n\n` +
+      `Type "DELETE ALL" to confirm:`;
+    
+    const userInput = prompt(confirmMessage);
+    
+    if (userInput !== "DELETE ALL") {
+      alert("Deletion cancelled. You must type 'DELETE ALL' to confirm.");
+      return;
+    }
+
+    setDeletingAll(true);
+    try {
+      const response = await fetch(`${apiUrl}/api/accounts/all`, {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+        throw new Error(errorData.detail || 'Failed to delete all accounts');
+      }
+
+      const data = await response.json();
+      
+      if (data.success) {
+        alert(
+          `All data deleted successfully!\n\n` +
+          `- Accounts: ${data.accounts_deleted}\n` +
+          `- Emails: ${data.emails_deleted}\n` +
+          `- Replies: ${data.replies_deleted}\n` +
+          `- Vector DB: ${data.vector_cleared ? 'Cleared' : 'Not cleared'}\n\n` +
+          `You will be logged out and redirected to login page.`
+        );
+        
+        // Clear local storage and redirect to login
+        localStorage.clear();
+        sessionStorage.clear();
+        window.location.href = '/login';
+      } else {
+        throw new Error(data.message || 'Failed to delete all accounts');
+      }
+    } catch (error) {
+      console.error('Error deleting all accounts:', error);
+      alert(`Failed to delete all accounts: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      setDeletingAll(false);
+    }
+  };
+
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
     return date.toLocaleDateString('en-US', {
@@ -321,6 +375,24 @@ export default function AdminPage() {
                 <>
                   <Search className="w-4 h-4 mr-2" />
                   Clean Vector DB
+                </>
+              )}
+            </Button>
+            <Button 
+              onClick={handleDeleteAllAccounts} 
+              variant="destructive"
+              disabled={deletingAll}
+              className="text-red-600 hover:text-red-700 hover:bg-red-50 border-red-300"
+            >
+              {deletingAll ? (
+                <>
+                  <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                  Deleting All...
+                </>
+              ) : (
+                <>
+                  <Trash2 className="w-4 h-4 mr-2" />
+                  Delete All Accounts
                 </>
               )}
             </Button>
