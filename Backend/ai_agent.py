@@ -6,6 +6,68 @@ import re
 from typing import Dict, List, Optional
 import config
 
+# Default prompt template (static instructions part)
+DEFAULT_PROMPT_TEMPLATE = """You are an expert email writing assistant that helps draft natural, conversational email replies. You write in a clear, concise tone that matches the sender's communication style.
+
+YOUR TASK:
+Understand the sender's intent (question, request, greeting, information sharing, etc.) and write a natural, direct reply.
+
+CRITICAL RULES - FOLLOW STRICTLY:
+1. NEVER start with "Thank you for your email" or "Hi [Name], Thank you for your email"
+2. NEVER use "Regarding your question" or "Regarding [topic]"
+3. NEVER use "I received your message" or "Thank you for reaching out"
+4. NEVER use "I see you reached out about..." or "I see you asked about..."
+5. NEVER use "How can I help you today?" or similar customer service phrases
+6. NEVER use "thank you for asking" - just answer directly
+7. NEVER use formal business email templates
+8. ALWAYS answer questions directly and naturally - respond as if in a conversation
+9. Match the sender's tone - if they're casual, be casual; if formal, be professional
+10. Keep responses concise (2-4 sentences) but meaningful
+11. Write as if texting a friend (for casual emails) - be friendly, warm, conversational
+12. If asked "How are you?" → Answer directly: "I'm doing well! How about you?" (NOT "I'm doing well, thank you for asking!")
+
+WHAT TO DO:
+- If they ask "How are you?" → Start directly: "I'm doing well, thanks! How about you?"
+- If they ask "where are you?" → Start directly: "I'm here and available. What's up!"
+- If they ask "are you okay?" → Start directly: "Yes, I'm doing great! How are you?" (NO "Thank you for your email" or "Regarding your question")
+- If they ask "what is the status of your health?" → Start directly: "All good here! How are you?"
+- If they ask any question → Answer it directly, don't preface with thank yous or formal greetings
+- If they share news → Acknowledge naturally: "That's great!" or "Thanks for letting me know!"
+- If they greet you → Respond naturally: "Hi! How can I help?" or "Hey! What's up!"
+
+BAD EXAMPLES (DO NOT DO THIS - THESE ARE WRONG):
+❌ "Hi Biddut Hossain, Thank you for your email. Regarding your question: are you okay? Let me look into that."
+❌ "Hi Biddut Hossain, Thank you for your email. Regarding your question: where are you? Let me look into that."
+❌ "Thank you for reaching out. I received your message about your health status."
+❌ "Hi, Thank you for your email regarding [subject]."
+❌ "I'm doing well, thank you for asking!" (WRONG - too formal)
+❌ "I see you reached out about 'Status'. How can I help you today?" (WRONG - generic customer service)
+❌ "I see you asked about [topic]. Let me help you with that." (WRONG - too formal)
+❌ ANY response that starts with "Thank you for your email", "Regarding your question", "I see you reached out", or "How can I help you today?"
+
+GOOD EXAMPLES (DO THIS - THESE ARE CORRECT):
+✅ "Yes, I'm doing great! How are you?" (for "are you okay?")
+✅ "I'm here and available. What's up!" (for "where are you?")
+✅ "All good here! How are you?" (for health status questions)
+✅ "I'm doing well! How about you?" (for "how are you?" - direct, no "thank you for asking")
+✅ "Hey! What's up!" (for casual greetings)
+✅ "Everything's good! What do you need?" (for status questions - direct answer)
+✅ "I'm doing well! How can I help?" (for greetings with offers - natural, not customer service tone)
+
+OUTPUT:
+- Write only the email body (no subject line needed - it's a reply)
+- Start your response directly - no formal greetings or thank yous
+- Answer their question or respond to their message immediately
+- Keep it natural and human-like
+- CRITICAL: You MUST end with exactly this format (use actual newlines):
+  [your response text]
+  
+  Best regards,
+  {sender_name}
+- DO NOT write "Best" alone - it must be "Best regards,"
+- DO NOT include email addresses in the signature
+- The words "Best regards," must be on their own line, followed by a newline, then the name"""
+
 
 class AIAgent:
     """AI-powered email agent for analysis and response generation"""
@@ -273,20 +335,22 @@ Summary:"""
             print(f"AI summarization failed: {e}")
             return self._simple_summarize(email_data)
     
-    def generate_response(self, email_data: Dict, tone: str = "professional") -> str:
+    def generate_response(self, email_data: Dict, tone: str = "professional", custom_prompt: Optional[str] = None) -> str:
         """
         Generate an AI response to an email
         
         Args:
             email_data: Email data dictionary
             tone: Response tone (professional, friendly, formal, casual)
+            custom_prompt: Optional custom prompt to override default behavior.
+                          If None or empty, uses DEFAULT_PROMPT_TEMPLATE
         
         Returns:
             Generated response text
         """
         if self.client:
             print(f"✅ Using AI client (provider: {self.provider})")
-            return self._ai_generate_response(email_data, tone)
+            return self._ai_generate_response(email_data, tone, custom_prompt)
         else:
             print(f"⚠️  AI client is None - using template response")
             print(f"   Provider: {self.provider}")
@@ -427,7 +491,7 @@ I have received your message and will get back to you shortly.
 Best regards,
 {sender_name}"""
     
-    def _ai_generate_response(self, email_data: Dict, tone: str) -> str:
+    def _ai_generate_response(self, email_data: Dict, tone: str, custom_prompt: Optional[str] = None) -> str:
         """AI-powered response generation with deep analysis"""
         try:
             if not self.client:
@@ -501,64 +565,17 @@ Best regards,
             # Log sender name for debugging
             print(f"📝 Using sender name: '{sender_name}' (from email: {sender_email or 'N/A'})")
             
-            prompt = f"""You are an expert email writing assistant that helps draft natural, conversational email replies. You write in a clear, concise tone that matches the sender's communication style.
+            # If custom_prompt is provided, use it instead of default prompt
+            if custom_prompt and custom_prompt.strip():
+                # Use custom prompt but still include email context and signature format
+                prompt = f"""{custom_prompt}
 
 EMAIL TO REPLY TO:
 From: {from_name} ({from_email})
 Subject: {subject}
 Body: {body}
 
-YOUR TASK:
-Understand the sender's intent (question, request, greeting, information sharing, etc.) and write a natural, direct reply.
-
-CRITICAL RULES - FOLLOW STRICTLY:
-1. NEVER start with "Thank you for your email" or "Hi [Name], Thank you for your email"
-2. NEVER use "Regarding your question" or "Regarding [topic]"
-3. NEVER use "I received your message" or "Thank you for reaching out"
-4. NEVER use "I see you reached out about..." or "I see you asked about..."
-5. NEVER use "How can I help you today?" or similar customer service phrases
-6. NEVER use "thank you for asking" - just answer directly
-7. NEVER use formal business email templates
-8. ALWAYS answer questions directly and naturally - respond as if in a conversation
-9. Match the sender's tone - if they're casual, be casual; if formal, be professional
-10. Keep responses concise (2-4 sentences) but meaningful
-11. Write as if texting a friend (for casual emails) - be friendly, warm, conversational
-12. If asked "How are you?" → Answer directly: "I'm doing well! How about you?" (NOT "I'm doing well, thank you for asking!")
-
-WHAT TO DO:
-- If they ask "How are you?" → Start directly: "I'm doing well, thanks! How about you?"
-- If they ask "where are you?" → Start directly: "I'm here and available. What's up!"
-- If they ask "are you okay?" → Start directly: "Yes, I'm doing great! How are you?" (NO "Thank you for your email" or "Regarding your question")
-- If they ask "what is the status of your health?" → Start directly: "All good here! How are you?"
-- If they ask any question → Answer it directly, don't preface with thank yous or formal greetings
-- If they share news → Acknowledge naturally: "That's great!" or "Thanks for letting me know!"
-- If they greet you → Respond naturally: "Hi! How can I help?" or "Hey! What's up!"
-
-BAD EXAMPLES (DO NOT DO THIS - THESE ARE WRONG):
-❌ "Hi Biddut Hossain, Thank you for your email. Regarding your question: are you okay? Let me look into that."
-❌ "Hi Biddut Hossain, Thank you for your email. Regarding your question: where are you? Let me look into that."
-❌ "Thank you for reaching out. I received your message about your health status."
-❌ "Hi, Thank you for your email regarding [subject]."
-❌ "I'm doing well, thank you for asking!" (WRONG - too formal)
-❌ "I see you reached out about 'Status'. How can I help you today?" (WRONG - generic customer service)
-❌ "I see you asked about [topic]. Let me help you with that." (WRONG - too formal)
-❌ ANY response that starts with "Thank you for your email", "Regarding your question", "I see you reached out", or "How can I help you today?"
-
-GOOD EXAMPLES (DO THIS - THESE ARE CORRECT):
-✅ "Yes, I'm doing great! How are you?" (for "are you okay?")
-✅ "I'm here and available. What's up!" (for "where are you?")
-✅ "All good here! How are you?" (for health status questions)
-✅ "I'm doing well! How about you?" (for "how are you?" - direct, no "thank you for asking")
-✅ "Hey! What's up!" (for casual greetings)
-✅ "Everything's good! What do you need?" (for status questions - direct answer)
-✅ "I'm doing well! How can I help?" (for greetings with offers - natural, not customer service tone)
-
-OUTPUT:
-- Write only the email body (no subject line needed - it's a reply)
-- Start your response directly - no formal greetings or thank yous
-- Answer their question or respond to their message immediately
-- Keep it natural and human-like
-- CRITICAL: You MUST end with exactly this format (use actual newlines):
+CRITICAL: You MUST end with exactly this format (use actual newlines):
   [your response text]
   
   Best regards,
@@ -570,6 +587,27 @@ OUTPUT:
 Now, write a natural, helpful response that directly addresses their message:
 
 Response:"""
+            else:
+                # Use default prompt (existing code)
+                prompt = f"""{DEFAULT_PROMPT_TEMPLATE}
+
+EMAIL TO REPLY TO:
+From: {from_name} ({from_email})
+Subject: {subject}
+Body: {body}
+
+Now, write a natural, helpful response that directly addresses their message:
+
+Response:"""
+            
+            # Log which prompt is being used
+            if custom_prompt and custom_prompt.strip():
+                print(f"📝 Using CUSTOM prompt (length: {len(custom_prompt)} chars)")
+            else:
+                print(f"📝 Using DEFAULT prompt template")
+            
+            # Simplified system message - detailed instructions are in the prompt
+            system_message = f"You are an expert email writing assistant. Follow the instructions in the user's prompt carefully. Always use the actual sender name '{sender_name}' in signatures, never use placeholders."
             
             if self.provider == "azure":
                 # Re-read deployment from config in case it changed
@@ -579,11 +617,11 @@ Response:"""
                 response = self.client.chat.completions.create(
                     model=self.azure_deployment,
                     messages=[
-                        {"role": "system", "content": f"You are an expert email writing assistant. You write natural, conversational email replies. CRITICAL RULES: NEVER start with 'Thank you for your email', 'I see you reached out about...', or 'How can I help you today?'. NEVER use 'thank you for asking' - just answer directly. NEVER use 'Regarding your question' or 'I received your message'. Always answer questions directly and immediately, as if texting a friend. For 'How are you?' respond with 'I'm doing well! How about you?' - NOT 'I'm doing well, thank you for asking!'. For 'what is your health condition?' respond with 'All good here! How are you?' - NO formal prefaces. ALWAYS end with 'Best regards,' on a separate line, followed by '{sender_name}' (the actual sender name, NOT '[Your Name]' or any placeholder) on the next line. DO NOT include email addresses in signatures. NEVER use placeholders like '[Your Name]' - use the actual name: {sender_name}."},
+                        {"role": "system", "content": system_message},
                         {"role": "user", "content": prompt}
                     ],
                     temperature=1.0,  # Higher temperature for more natural, creative responses
-                    max_tokens=400
+                    max_tokens=800  # Increased from 400 to allow longer, more detailed responses
                 )
                 response_text = response.choices[0].message.content.strip()
                 cleaned_response = self._clean_formal_phrases(response_text, body, email_data)
@@ -594,11 +632,11 @@ Response:"""
                 response = self.client.chat.completions.create(
                     model="gpt-3.5-turbo",
                     messages=[
-                        {"role": "system", "content": f"You are an expert email writing assistant. You write natural, conversational email replies. CRITICAL RULES: NEVER start with 'Thank you for your email', 'I see you reached out about...', or 'How can I help you today?'. NEVER use 'thank you for asking' - just answer directly. NEVER use 'Regarding your question' or 'I received your message'. Always answer questions directly and immediately, as if texting a friend. For 'How are you?' respond with 'I'm doing well! How about you?' - NOT 'I'm doing well, thank you for asking!'. For 'what is your health condition?' respond with 'All good here! How are you?' - NO formal prefaces. ALWAYS end with 'Best regards,' on a separate line, followed by '{sender_name}' (the actual sender name, NOT '[Your Name]' or any placeholder) on the next line. DO NOT include email addresses in signatures. NEVER use placeholders like '[Your Name]' - use the actual name: {sender_name}."},
+                        {"role": "system", "content": system_message},
                         {"role": "user", "content": prompt}
                     ],
                     temperature=1.0,
-                    max_tokens=400
+                    max_tokens=800  # Increased from 400 to allow longer, more detailed responses
                 )
                 response_text = response.choices[0].message.content.strip()
                 cleaned_response = self._clean_formal_phrases(response_text, body, email_data)
@@ -608,12 +646,12 @@ Response:"""
             elif self.provider == "anthropic":
                 response = self.client.messages.create(
                     model="claude-3-haiku-20240307",
-                    max_tokens=400,
-                    system=f"You are an expert email writing assistant. You write natural, conversational email replies. CRITICAL: NEVER start with 'Thank you for your email' or 'Hi [Name], Thank you for your email'. NEVER use 'Regarding your question' or 'I received your message'. Always answer questions directly and immediately, as if texting a friend. For 'what is your health condition?' respond with 'All good here! How are you?' - NO formal prefaces. ALWAYS end with 'Best regards,' on a separate line, followed by '{sender_name}' (the actual sender name, NOT '[Your Name]' or any placeholder) on the next line. DO NOT include email addresses in signatures. NEVER use placeholders like '[Your Name]' - use the actual name: {sender_name}.",
+                    max_tokens=800,  # Increased from 400 to allow longer, more detailed responses
+                    system=system_message,
                     messages=[{"role": "user", "content": prompt}]
                 )
                 response_text = response.content[0].text.strip()
-                cleaned_response = self._clean_formal_phrases(response_text, body)
+                cleaned_response = self._clean_formal_phrases(response_text, body, email_data)
                 print(f"🔍 After cleanup - Original length: {len(response_text)}, Cleaned length: {len(cleaned_response)}")
                 return cleaned_response
             

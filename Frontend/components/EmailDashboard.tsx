@@ -27,6 +27,11 @@ import {
   X,
   Calendar as CalendarIcon,
   LogOut,
+  ChevronLeft,
+  ChevronRight,
+  FileText,
+  X as XIcon,
+  Check,
 } from 'lucide-react';
 import {
   Select,
@@ -51,18 +56,52 @@ export default function EmailDashboard() {
   const [stats, setStats] = useState<EmailStats | null>(null);
   const [healthStatus, setHealthStatus] = useState<{ status: string; email: string; ai_enabled: boolean; accounts_count?: number; version?: string } | null>(null);
   const [autoReplyEnabled, setAutoReplyEnabled] = useState<boolean>(false);
+  const [customPrompt, setCustomPrompt] = useState<string>('');
+  const [customPromptValue, setCustomPromptValue] = useState<string>('');
   const [aiResponse, setAiResponse] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState('');
   const [replyBody, setReplyBody] = useState('');
-  const [activeTab, setActiveTab] = useState('mongodb');
-  const [dateFilter, setDateFilter] = useState<string>('today');
+  const [activeTab, setActiveTab] = useState('inbox');
+  const [dateFilter, setDateFilter] = useState<string>('last30'); // Default to last 30 days for better email discovery
   const [customDateFrom, setCustomDateFrom] = useState<Date | undefined>(undefined);
   const [customDateTo, setCustomDateTo] = useState<Date | undefined>(undefined);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalEmails, setTotalEmails] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingEmails, setLoadingEmails] = useState(false);
+  const emailsPerPage = 20;
 
   // Load health status on mount
   useEffect(() => {
     checkHealth();
   }, []);
+
+  // Load emails from MongoDB when inbox tab is active
+  useEffect(() => {
+    if (activeTab === 'inbox') {
+      loadEmailsFromMongoDB();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, currentPage, dateFilter, customDateFrom, customDateTo]);
+
+  // Sync custom prompt value when switching to prompt tab
+  useEffect(() => {
+    if (activeTab === 'prompt') {
+      // If custom prompt exists, use it; otherwise load default
+      if (customPrompt) {
+        setCustomPromptValue(customPrompt);
+      } else {
+        // Load default prompt if not already loaded
+        if (!customPromptValue) {
+          api.getDefaultPrompt().then(defaultPrompt => {
+            setCustomPromptValue(defaultPrompt);
+          }).catch(error => {
+            console.error('Failed to load default prompt:', error);
+          });
+        }
+      }
+    }
+  }, [activeTab, customPrompt]);
 
   const handleLogout = async () => {
     try {
@@ -88,6 +127,26 @@ export default function EmailDashboard() {
         console.error('Auto-reply status check failed:', autoReplyError);
         // Don't fail the whole health check if auto-reply status fails
       }
+      
+      // Also load custom prompt
+      try {
+        const prompt = await api.getActiveAccountCustomPrompt();
+        setCustomPrompt(prompt);
+        // If no custom prompt is set, load the default prompt
+        if (!prompt) {
+          try {
+            const defaultPrompt = await api.getDefaultPrompt();
+            setCustomPromptValue(defaultPrompt);
+          } catch (defaultError) {
+            console.error('Failed to load default prompt:', defaultError);
+          }
+        } else {
+          setCustomPromptValue(prompt); // Initialize editor with current custom prompt
+        }
+      } catch (promptError: any) {
+        console.error('Custom prompt load failed:', promptError);
+        // Don't fail the whole health check if custom prompt fails
+      }
     } catch (error: any) {
       console.error('Health check failed:', error);
       const errorMessage = error.message || String(error);
@@ -110,6 +169,28 @@ export default function EmailDashboard() {
     } catch (error) {
       console.error('Failed to toggle auto-reply:', error);
       alert(`Failed to toggle auto-reply: ${error}`);
+    }
+  };
+
+  const handleSaveCustomPrompt = async () => {
+    try {
+      // If the value matches the default prompt, save empty string to use default
+      const defaultPrompt = await api.getDefaultPrompt();
+      const promptToSave = customPromptValue.trim() === defaultPrompt.trim() ? '' : customPromptValue;
+      
+      await api.updateActiveAccountCustomPrompt(promptToSave);
+      setCustomPrompt(promptToSave);
+      
+      if (promptToSave === '') {
+        alert('Custom prompt cleared. Using default prompt.');
+        // Reload default prompt in editor
+        setCustomPromptValue(defaultPrompt);
+      } else {
+        alert('Custom prompt updated successfully!');
+      }
+    } catch (error) {
+      console.error('Failed to save custom prompt:', error);
+      alert(`Failed to save custom prompt: ${error}`);
     }
   };
 
@@ -143,41 +224,93 @@ export default function EmailDashboard() {
   const clearCustomDates = () => {
     setCustomDateFrom(undefined);
     setCustomDateTo(undefined);
+    setCurrentPage(1); // Reset to first page when clearing dates
   };
 
+  // Reset to page 1 when date filter changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [dateFilter, customDateFrom, customDateTo]);
+
+  // Load emails from IMAP/Gmail API and upsert to MongoDB and vector DB
   const loadEmails = async (unreadOnly: boolean = false) => {
     setLoading(true);
     try {
       const { from, to } = getDateRange(dateFilter);
       
-      // Use lower limit for faster loading (reduced from 200 to 50)
+      // Use lower limit for faster loading
       const limit = 50;
       
       const response = await api.getEmails(limit, unreadOnly, 'INBOX', from, to);
       
-      // Check for errors in response (response may have error property even if not in type)
+      // Check for errors in response
       const responseWithError = response as any;
       if (response.success === false || responseWithError.error) {
         console.error('Email loading error:', response);
         alert(`Failed to load emails: ${responseWithError.error || 'No active email account. Please add an account first.'}`);
-        setEmails([]);
         return;
       }
       
-      // Handle response - check if emails array exists
-      if (response.emails && Array.isArray(response.emails)) {
-        setEmails(response.emails);
+      const emailCount = response.count || 0;
+      
+      // Show appropriate message based on results
+      if (emailCount === 0) {
+        const dateRangeText = dateFilter === 'today' 
+          ? 'today' 
+          : dateFilter === 'last7' 
+            ? 'in the last 7 days'
+            : dateFilter === 'last30'
+              ? 'in the last 30 days'
+              : dateFilter === 'thisMonth'
+                ? 'this month'
+                : dateFilter === 'thisYear'
+                  ? 'this year'
+                  : 'in the selected date range';
+        
+        alert(`No emails found ${dateRangeText}. Try selecting a different date range (e.g., "Last 7 Days" or "Last 30 Days") or check if your email account has emails.`);
       } else {
-        setEmails([]);
+        alert(`Loaded ${emailCount} email${emailCount === 1 ? '' : 's'}. They have been saved to MongoDB and vector database.`);
+        
+        // Wait a moment for async save to complete, then reload from MongoDB
+        // This ensures the newly loaded emails are visible in the inbox
+        setTimeout(async () => {
+          await loadEmailsFromMongoDB();
+        }, 1000); // Wait 1 second for async MongoDB save to complete
       }
     } catch (error: any) {
       console.error('Failed to load emails:', error);
-      // Show user-friendly error message
       const errorMessage = error.message || 'Failed to connect to backend. Please ensure the backend is running.';
       alert(`Error loading emails: ${errorMessage}`);
-      setEmails([]);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Load emails from MongoDB with pagination (for inbox display)
+  const loadEmailsFromMongoDB = async () => {
+    setLoadingEmails(true);
+    try {
+      const { from, to } = getDateRange(dateFilter);
+      const skip = (currentPage - 1) * emailsPerPage;
+      
+      const response = await api.getMongoDBEmails(emailsPerPage, skip, from, to, false);
+      
+      if (response.success) {
+        setEmails(response.emails || []);
+        setTotalEmails(response.total || 0);
+        setHasMore(response.has_more || false);
+      } else {
+        setEmails([]);
+        setTotalEmails(0);
+        setHasMore(false);
+      }
+    } catch (error: any) {
+      console.error('Failed to load emails from MongoDB:', error);
+      setEmails([]);
+      setTotalEmails(0);
+      setHasMore(false);
+    } finally {
+      setLoadingEmails(false);
     }
   };
 
@@ -362,15 +495,25 @@ export default function EmailDashboard() {
                       </Badge>
                     )}
                   </div>
-                  <Button
-                    onClick={toggleAutoReply}
-                    variant={autoReplyEnabled ? "default" : "outline"}
-                    size="sm"
-                    className={autoReplyEnabled ? "bg-green-600 hover:bg-green-700" : ""}
-                  >
-                    <Bot className="w-4 h-4 mr-2" />
-                    {autoReplyEnabled ? "Auto-Reply ON" : "Auto-Reply OFF"}
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      onClick={toggleAutoReply}
+                      variant={autoReplyEnabled ? "default" : "outline"}
+                      size="sm"
+                      className={autoReplyEnabled ? "bg-green-600 hover:bg-green-700" : ""}
+                    >
+                      <Bot className="w-4 h-4 mr-2" />
+                      {autoReplyEnabled ? "Auto-Reply ON" : "Auto-Reply OFF"}
+                    </Button>
+                    
+                    {/* Custom Prompt Indicator */}
+                    {customPrompt && (
+                      <Badge variant="outline" className="flex items-center gap-1">
+                        <FileText className="w-3 h-3" />
+                        Custom Prompt Set
+                      </Badge>
+                    )}
+                  </div>
                 </div>
               </CardContent>
             </Card>
@@ -380,7 +523,7 @@ export default function EmailDashboard() {
 
       {/* Main Content */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-        <TabsList className="grid w-full grid-cols-3">
+        <TabsList className="grid w-full grid-cols-4">
           <TabsTrigger value="mongodb" className="flex items-center gap-2">
             <Send className="w-4 h-4" />
             Auto Replies
@@ -395,6 +538,15 @@ export default function EmailDashboard() {
             {emails.length > 0 && (
               <Badge variant="secondary" className="ml-1 h-5 px-1 text-xs">
                 {emails.length}
+              </Badge>
+            )}
+          </TabsTrigger>
+          <TabsTrigger value="prompt" className="flex items-center gap-2">
+            <FileText className="w-4 h-4" />
+            Custom Prompt
+            {customPrompt && (
+              <Badge variant="secondary" className="ml-1 h-5 px-1 text-xs">
+                Set
               </Badge>
             )}
           </TabsTrigger>
@@ -524,30 +676,61 @@ export default function EmailDashboard() {
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center justify-between">
-                  <span>Emails ({emails.length})</span>
-                  {emails.length >= 200 && (
+                  <span>Emails {totalEmails > 0 && `(${totalEmails} total)`}</span>
+                  {loadingEmails && (
                     <Badge variant="secondary" className="text-xs">
-                      Limited to 200 (max reached)
-                    </Badge>
-                  )}
-                  {emails.length < 200 && emails.length > 0 && (
-                    <Badge variant="outline" className="text-xs">
-                      All emails loaded
+                      <RefreshCw className="w-3 h-3 mr-1 animate-spin" />
+                      Loading...
                     </Badge>
                   )}
                 </CardTitle>
-                <CardDescription>Click to view details</CardDescription>
+                <CardDescription>
+                  Showing {emails.length > 0 ? (currentPage - 1) * emailsPerPage + 1 : 0} - {Math.min(currentPage * emailsPerPage, totalEmails)} of {totalEmails} emails
+                </CardDescription>
               </CardHeader>
               <CardContent>
                 <ScrollArea className="h-[600px] pr-4">
-                  <div className="space-y-3">
-                    {emails.map((email, idx) => (
+                  {loadingEmails ? (
+                    <div className="flex items-center justify-center h-[400px]">
+                      <div className="text-center">
+                        <RefreshCw className="w-8 h-8 animate-spin mx-auto mb-4 text-muted-foreground" />
+                        <p className="text-muted-foreground">Loading emails...</p>
+                      </div>
+                    </div>
+                  ) : emails.length === 0 ? (
+                    <div className="flex items-center justify-center h-[400px]">
+                      <div className="text-center">
+                        <Mail className="w-12 h-12 mx-auto mb-4 text-muted-foreground opacity-50" />
+                        <p className="text-muted-foreground">No emails found</p>
+                        <p className="text-sm text-muted-foreground mt-2">Click "Load Emails" to fetch from your email account</p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {emails.map((email, idx) => (
                       <Card
-                        key={email.id}
+                        key={email.message_id || email.id || idx}
                         className={`cursor-pointer transition-colors hover:bg-accent ${
-                          selectedEmail?.id === email.id ? 'bg-accent' : ''
+                          (selectedEmail?.message_id || selectedEmail?.id) === (email.message_id || email.id) ? 'bg-accent' : ''
                         }`}
-                        onClick={() => setSelectedEmail(email)}
+                        onClick={async () => {
+                          // Set selected email immediately for UI feedback
+                          setSelectedEmail(email);
+                          
+                          // If email has message_id, fetch full body from MongoDB
+                          if (email.message_id) {
+                            try {
+                              const fullEmail = await api.getSingleEmail(email.message_id);
+                              if (fullEmail.success && fullEmail.email) {
+                                // Update selected email with full body content
+                                setSelectedEmail(fullEmail.email);
+                              }
+                            } catch (error) {
+                              console.error('Failed to fetch email body:', error);
+                              // Keep the email selected even if body fetch fails
+                            }
+                          }
+                        }}
                       >
                         <CardContent className="p-4">
                           <div className="space-y-2">
@@ -556,7 +739,7 @@ export default function EmailDashboard() {
                                 {email.subject || 'No Subject'}
                               </h3>
                               <Badge variant="outline" className="text-xs shrink-0">
-                                #{idx + 1}
+                                #{(currentPage - 1) * emailsPerPage + idx + 1}
                               </Badge>
                             </div>
                             
@@ -599,18 +782,39 @@ export default function EmailDashboard() {
                           </div>
                         </CardContent>
                       </Card>
-                    ))}
-                    {emails.length === 0 && (
-                      <div className="text-center py-16">
-                        <div className="w-16 h-16 mx-auto rounded-full bg-muted flex items-center justify-center mb-4">
-                          <Mail className="w-8 h-8 text-muted-foreground opacity-50" />
-                        </div>
-                        <p className="text-base font-medium text-foreground mb-2">No emails loaded</p>
-                        <p className="text-sm text-muted-foreground">Click "Load Emails" to fetch your emails</p>
-                      </div>
-                    )}
-                  </div>
+                      ))}
+                    </div>
+                  )}
                 </ScrollArea>
+                
+                {/* Pagination Controls */}
+                {!loadingEmails && emails.length > 0 && (
+                  <div className="flex items-center justify-between mt-4 pt-4 border-t">
+                    <div className="text-sm text-muted-foreground">
+                      Page {currentPage} of {Math.ceil(totalEmails / emailsPerPage) || 1}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                        disabled={currentPage === 1 || loadingEmails}
+                      >
+                        <ChevronLeft className="w-4 h-4" />
+                        Previous
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setCurrentPage(prev => prev + 1)}
+                        disabled={!hasMore || loadingEmails}
+                      >
+                        Next
+                        <ChevronRight className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
 
@@ -799,6 +1003,91 @@ export default function EmailDashboard() {
         {/* Chat Tab */}
         <TabsContent value="chat" className="space-y-4">
           <EmailChat emails={emails} />
+        </TabsContent>
+
+        {/* Custom Prompt Tab */}
+        <TabsContent value="prompt" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <FileText className="w-5 h-5" />
+                Custom AI Prompt
+              </CardTitle>
+              <CardDescription>
+                Set a custom prompt to guide how the AI generates email responses. This prompt will override the default behavior and be used for all auto-replies and manual AI-generated responses for your account.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Custom Prompt</label>
+                <Textarea
+                  value={customPromptValue || customPrompt}
+                  onChange={(e) => setCustomPromptValue(e.target.value)}
+                  placeholder={`Enter your custom prompt here...
+
+Example:
+You are a friendly customer service representative. Always be polite, concise, and helpful. Address the customer's concerns directly without unnecessary formalities.`}
+                  className="min-h-[400px] font-mono text-sm resize-y"
+                  rows={15}
+                />
+                <p className="text-xs text-muted-foreground">
+                  The email context (From, Subject, Body) will be automatically appended to your prompt. The AI will still format responses with "Best regards," and your name at the end.
+                </p>
+              </div>
+              
+              <div className="flex items-center justify-between pt-4 border-t">
+                <div className="text-sm text-muted-foreground">
+                  {customPrompt ? (
+                    <span className="flex items-center gap-2">
+                      <Check className="w-4 h-4 text-green-500" />
+                      Custom prompt is active
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-2">
+                      <FileText className="w-4 h-4 text-muted-foreground" />
+                      Using default prompt (shown above)
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={async () => {
+                      try {
+                        const defaultPrompt = await api.getDefaultPrompt();
+                        setCustomPromptValue(defaultPrompt);
+                      } catch (error) {
+                        console.error('Failed to load default prompt:', error);
+                        alert('Failed to load default prompt');
+                      }
+                    }}
+                    className="gap-2"
+                  >
+                    <RefreshCw className="w-4 h-4" />
+                    Reset to Default
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setCustomPromptValue(customPrompt || '');
+                    }}
+                    disabled={customPromptValue === (customPrompt || '')}
+                  >
+                    <XIcon className="w-4 h-4 mr-2" />
+                    Undo Changes
+                  </Button>
+                  <Button
+                    onClick={handleSaveCustomPrompt}
+                    disabled={customPromptValue === (customPrompt || '')}
+                    className="gap-2"
+                  >
+                    <Check className="w-4 h-4" />
+                    Save Prompt
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
         </TabsContent>
 
         {/* Auto Replies Tab */}

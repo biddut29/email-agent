@@ -22,7 +22,8 @@ import {
   Activity,
   Trash2,
   RefreshCw,
-  Bot
+  Bot,
+  Search
 } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 
@@ -35,6 +36,7 @@ interface Account {
   smtp_port: number;
   is_active: boolean;
   auto_reply_enabled?: boolean;
+  custom_prompt?: string;
   created_at: string;
 }
 
@@ -49,6 +51,9 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState<Stats>({ total: 0, active: 0, inactive: 0 });
   const [globalAutoReply, setGlobalAutoReply] = useState(false);
+  const [cleaningVector, setCleaningVector] = useState(false);
+  const [editingPromptAccountId, setEditingPromptAccountId] = useState<number | null>(null);
+  const [customPromptValue, setCustomPromptValue] = useState<string>('');
 
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
@@ -190,6 +195,72 @@ export default function AdminPage() {
     }
   };
 
+  const handleSaveCustomPrompt = async (accountId: number) => {
+    try {
+      const response = await fetch(`${apiUrl}/api/accounts/${accountId}/custom-prompt`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ custom_prompt: customPromptValue })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+        throw new Error(errorData.detail || 'Failed to update custom prompt');
+      }
+
+      const data = await response.json();
+      alert('Custom prompt updated successfully!');
+      setEditingPromptAccountId(null);
+      setCustomPromptValue('');
+      loadAccounts();
+    } catch (error) {
+      console.error('Error updating custom prompt:', error);
+      alert(`Failed to update custom prompt: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
+
+  const handleEditCustomPrompt = (account: Account) => {
+    setEditingPromptAccountId(account.id);
+    setCustomPromptValue(account.custom_prompt || '');
+  };
+
+  const handleCancelEditPrompt = () => {
+    setEditingPromptAccountId(null);
+    setCustomPromptValue('');
+  };
+
+  const handleRemoveSentEmails = async () => {
+    if (!confirm('This will remove all sent emails (auto-replies) from the vector database. This will improve chat search results. Continue?')) {
+      return;
+    }
+
+    setCleaningVector(true);
+    try {
+      const response = await fetch(`${apiUrl}/api/search/remove-sent-emails`, {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+        throw new Error(errorData.detail || 'Failed to remove sent emails');
+      }
+
+      const data = await response.json();
+      const deletedCount = data.deleted || 0;
+      
+      if (deletedCount > 0) {
+        alert(`Successfully removed ${deletedCount} sent email(s) from vector database. Chat search will now only show incoming emails.`);
+      } else {
+        alert('No sent emails found in vector database. Everything is clean!');
+      }
+    } catch (error) {
+      console.error('Error removing sent emails:', error);
+      alert(`Failed to remove sent emails: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setCleaningVector(false);
+    }
+  };
+
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
     return date.toLocaleDateString('en-US', {
@@ -235,6 +306,24 @@ export default function AdminPage() {
                 {globalAutoReply ? 'ON' : 'OFF'}
               </span>
             </div>
+            <Button 
+              onClick={handleRemoveSentEmails} 
+              variant="outline"
+              disabled={cleaningVector}
+              className="text-orange-600 hover:text-orange-700 hover:bg-orange-50"
+            >
+              {cleaningVector ? (
+                <>
+                  <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                  Cleaning...
+                </>
+              ) : (
+                <>
+                  <Search className="w-4 h-4 mr-2" />
+                  Clean Vector DB
+                </>
+              )}
+            </Button>
             <Button onClick={loadAccounts} variant="outline">
               <RefreshCw className="w-4 h-4 mr-2" />
               Refresh
@@ -309,6 +398,7 @@ export default function AdminPage() {
                       <TableHead>SMTP Server</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead>Auto-Reply</TableHead>
+                      <TableHead>Custom Prompt</TableHead>
                       <TableHead>Created</TableHead>
                       <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
@@ -356,6 +446,56 @@ export default function AdminPage() {
                               {account.auto_reply_enabled !== false ? 'ON' : 'OFF'}
                             </span>
                           </div>
+                        </TableCell>
+                        <TableCell>
+                          {editingPromptAccountId === account.id ? (
+                            <div className="space-y-2">
+                              <textarea
+                                value={customPromptValue}
+                                onChange={(e) => setCustomPromptValue(e.target.value)}
+                                placeholder="Enter custom prompt for AI responses..."
+                                className="w-full min-h-[80px] p-2 text-sm border rounded-md resize-y"
+                                rows={3}
+                              />
+                              <div className="flex gap-2">
+                                <Button
+                                  size="sm"
+                                  variant="default"
+                                  onClick={() => handleSaveCustomPrompt(account.id)}
+                                  className="h-7 text-xs"
+                                >
+                                  Save
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={handleCancelEditPrompt}
+                                  className="h-7 text-xs"
+                                >
+                                  Cancel
+                                </Button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="space-y-1">
+                              {account.custom_prompt ? (
+                                <p className="text-xs text-muted-foreground line-clamp-2">
+                                  {account.custom_prompt.substring(0, 50)}
+                                  {account.custom_prompt.length > 50 ? '...' : ''}
+                                </p>
+                              ) : (
+                                <p className="text-xs text-muted-foreground italic">No custom prompt</p>
+                              )}
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => handleEditCustomPrompt(account)}
+                                className="h-6 text-xs"
+                              >
+                                {account.custom_prompt ? 'Edit' : 'Set Prompt'}
+                              </Button>
+                            </div>
+                          )}
                         </TableCell>
                         <TableCell className="text-sm text-muted-foreground">
                           <div className="flex items-center">

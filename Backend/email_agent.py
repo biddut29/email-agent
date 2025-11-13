@@ -649,8 +649,37 @@ class EmailAgent:
                 print(f"   AI Provider: {self.ai_agent.provider}")
                 print(f"   This indicates AI configuration is missing or failed")
             
-            # Generate response
-            response_body = self.ai_agent.generate_response(email_data, tone=tone)
+            # Add sender name to email_data for proper signature generation
+            # Get account_id from email_data if available
+            account_id = email_data.get('account_id')
+            reply_account = None
+            if self.account_manager and account_id:
+                all_accounts = self.account_manager.get_all_accounts_with_credentials()
+                reply_account = next((acc for acc in all_accounts if acc.get('id') == account_id), None)
+            
+            if not reply_account and self.account_manager:
+                reply_account = self.account_manager.get_active_account()
+            
+            if reply_account:
+                sender_email = reply_account.get('email', '')
+                if sender_email:
+                    sender_name = sender_email.split('@')[0].replace('.', ' ').replace('_', ' ').title()
+                    email_data['sender_name'] = sender_name
+                    email_data['reply_account'] = reply_account
+            
+            # Get account's custom prompt if available
+            custom_prompt = None
+            if account_id and self.account_manager:
+                account = self.account_manager.get_account(account_id)
+                if account:
+                    custom_prompt = account.get('custom_prompt', '')
+                    if custom_prompt and custom_prompt.strip():
+                        print(f"📝 Using custom prompt for account {account.get('email')}")
+                    else:
+                        print(f"📝 Using default prompt for account {account.get('email')}")
+            
+            # Generate response using prompt (custom or default)
+            response_body = self.ai_agent.generate_response(email_data, tone=tone, custom_prompt=custom_prompt)
             
             print("\n" + "─"*60)
             print("Generated Response:")

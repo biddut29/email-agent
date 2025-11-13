@@ -182,12 +182,13 @@ class EmailVectorStore:
         
         return "\n".join(parts)
     
-    def add_emails(self, emails: List[Dict]) -> Dict:
+    def add_emails(self, emails: List[Dict], account_email: Optional[str] = None) -> Dict:
         """
-        Add emails to vector store
+        Add emails to vector store (ONLY incoming emails, filters out sent emails)
         
         Args:
             emails: List of email dictionaries
+            account_email: Account email address to filter out sent emails (emails FROM this address)
         
         Returns:
             Dict with stats
@@ -196,11 +197,38 @@ class EmailVectorStore:
             return {"error": "Vector store not initialized"}
         
         try:
+            # Filter out sent emails (emails FROM the account email address)
+            incoming_emails = []
+            skipped_count = 0
+            
+            if account_email:
+                account_email_lower = account_email.lower()
+                for email in emails:
+                    from_address = email.get('from', '').lower()
+                    # Skip emails that are FROM the account (these are sent emails/auto-replies)
+                    # Check if account email appears in the "from" field
+                    if account_email_lower in from_address:
+                        skipped_count += 1
+                        print(f"⏭️  Skipping sent email from vector store: {email.get('subject', 'No subject')[:50]}")
+                    else:
+                        incoming_emails.append(email)
+            else:
+                # If no account email provided, store all emails (backward compatibility)
+                incoming_emails = emails
+            
+            if not incoming_emails:
+                return {
+                    "success": True,
+                    "added": 0,
+                    "skipped": skipped_count,
+                    "total": self.collection.count()
+                }
+            
             ids = []
             documents = []
             metadatas = []
             
-            for email in emails:
+            for email in incoming_emails:
                 email_id = self._generate_email_id(email)
                 document = self._prepare_email_text(email)
                 
@@ -230,9 +258,13 @@ class EmailVectorStore:
                 metadatas=metadatas
             )
             
+            if skipped_count > 0:
+                print(f"✓ Added {len(ids)} incoming emails to vector store (skipped {skipped_count} sent emails)")
+            
             return {
                 "success": True,
                 "added": len(ids),
+                "skipped": skipped_count,
                 "total": self.collection.count()
             }
         
@@ -473,6 +505,76 @@ class EmailVectorStore:
                     "deleted": 0
                 }
         except Exception as e:
+            return {"error": str(e)}
+    
+    def remove_sent_emails(self, account_email: str, account_id: Optional[int] = None) -> Dict:
+        """
+        Remove sent emails (emails FROM the account email) from vector store
+        
+        Args:
+            account_email: Account email address to identify sent emails
+            account_id: Optional account ID to filter by (if None, uses current_account_id)
+        
+        Returns:
+            Dict with removal stats
+        """
+        if not self.collection:
+            return {"error": "Vector store not initialized"}
+        
+        try:
+            # Use provided account_id or current_account_id
+            filter_account_id = str(account_id) if account_id is not None else str(self.current_account_id) if self.current_account_id else None
+            
+            # Get all emails for this account
+            if filter_account_id:
+                results = self.collection.get(
+                    where={"account_id": filter_account_id},
+                    limit=10000,
+                    include=['metadatas']
+                )
+            else:
+                # If no account_id, get all emails (less efficient but works)
+                results = self.collection.get(
+                    limit=10000,
+                    include=['metadatas']
+                )
+            
+            if not results.get('ids'):
+                return {
+                    "success": True,
+                    "deleted": 0,
+                    "message": "No emails found in vector store"
+                }
+            
+            account_email_lower = account_email.lower()
+            sent_email_ids = []
+            
+            # Check each email's metadata to find sent emails
+            for i, email_id in enumerate(results['ids']):
+                metadata = results['metadatas'][i] if results.get('metadatas') and i < len(results['metadatas']) else {}
+                from_address = metadata.get('from', '').lower()
+                
+                # If the "from" field contains the account email, it's a sent email
+                if account_email_lower in from_address:
+                    sent_email_ids.append(email_id)
+            
+            # Delete sent emails
+            if sent_email_ids:
+                self.collection.delete(ids=sent_email_ids)
+                return {
+                    "success": True,
+                    "deleted": len(sent_email_ids),
+                    "message": f"Removed {len(sent_email_ids)} sent email(s) from vector store"
+                }
+            else:
+                return {
+                    "success": True,
+                    "deleted": 0,
+                    "message": "No sent emails found in vector store"
+                }
+        
+        except Exception as e:
+            print(f"Error removing sent emails from vector store: {e}")
             return {"error": str(e)}
 
 
