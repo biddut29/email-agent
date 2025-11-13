@@ -103,7 +103,7 @@ Guidelines:
 
 Email context is provided below. Use this information to answer user questions."""
     
-    def chat(self, user_message: str, include_context: bool = True, use_vector_search: bool = False) -> Dict:
+    def chat(self, user_message: str, include_context: bool = True, use_vector_search: bool = False, total_email_count: int = 0) -> Dict:
         """
         Send a message and get a response from the chat agent
         
@@ -111,6 +111,7 @@ Email context is provided below. Use this information to answer user questions."
             user_message: The user's message
             include_context: Whether to include email context
             use_vector_search: Use semantic search to find relevant emails
+            total_email_count: Total number of emails in the inbox (for accurate counting)
         
         Returns:
             Dictionary with response and metadata
@@ -139,7 +140,11 @@ Email context is provided below. Use this information to answer user questions."
                         if vector_store.collection:
                             relevant_results = vector_store.get_relevant_emails_for_chat(user_message, n_results=5)
                             if relevant_results:
-                                context_parts = ["Relevant emails from your inbox (found via semantic search):\n"]
+                                # Include total count in context so AI knows the full picture
+                                context_parts = [
+                                    f"IMPORTANT: You have access to a total of {total_email_count} emails in the inbox. ",
+                                    f"The following are the most relevant emails (top 5) found via semantic search based on the user's query:\n"
+                                ]
                                 for i, result in enumerate(relevant_results, 1):
                                     context_parts.append(f"\n--- Email {i} ---")
                                     context_parts.append(result.get('document', ''))
@@ -158,6 +163,14 @@ Email context is provided below. Use this information to answer user questions."
                 # Fallback to email_context if vector search didn't provide results
                 if not context_message and self.email_context:
                     context_message = self._format_email_context()
+                
+                # Add total count to context if available (even if no vector search)
+                if total_email_count > 0 and context_message:
+                    # Prepend total count info to context
+                    context_message = f"IMPORTANT: You have access to a total of {total_email_count} emails in the inbox.\n\n{context_message}"
+                elif total_email_count > 0 and not context_message:
+                    # If no other context, at least provide the count
+                    context_message = f"You have access to a total of {total_email_count} emails in the inbox."
                 
                 # Add context to messages if we have any
                 if context_message:
