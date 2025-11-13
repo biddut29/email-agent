@@ -50,7 +50,7 @@ active_sessions = {}
 app = FastAPI(
     title="Email Agent API",
     description="AI-powered email management system",
-    version="1.0.0"
+    version=backend_version
 )
 
 # Add CORS middleware with optimized settings
@@ -256,7 +256,7 @@ async def shutdown_event():
 async def root():
     return {
         "message": "Email Agent API",
-        "version": "1.0.0",
+        "version": backend_version,
         "status": "running",
         "docs": "/docs"
     }
