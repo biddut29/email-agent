@@ -666,8 +666,10 @@ class EmailAgentAPI {
       success: boolean;
       auto_reply_enabled: boolean;
       message: string;
-    }>(`/api/auto-reply/toggle?enabled=${enabled}`, {
+    }>('/api/auto-reply/toggle', {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled })
     });
   }
 
