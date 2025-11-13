@@ -1746,6 +1746,68 @@ async def delete_account(account_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.delete("/api/accounts/all")
+async def delete_all_accounts():
+    """Delete all accounts and all related data (emails, replies, vector store)"""
+    try:
+        print("🗑️  Starting deletion of ALL accounts and data...")
+        
+        # Get all accounts first to get their IDs
+        all_accounts = account_manager.get_all_accounts()
+        account_ids = [acc['id'] for acc in all_accounts]
+        
+        # Delete all emails from MongoDB for all accounts
+        mongo_emails_deleted = 0
+        if mongodb_manager.emails_collection is not None:
+            result = mongodb_manager.emails_collection.delete_many({})
+            mongo_emails_deleted = result.deleted_count
+            print(f"✓ Deleted {mongo_emails_deleted} emails from MongoDB")
+        
+        # Delete all replies from MongoDB
+        mongo_replies_deleted = 0
+        if mongodb_manager.replies_collection is not None:
+            result = mongodb_manager.replies_collection.delete_many({})
+            mongo_replies_deleted = result.deleted_count
+            print(f"✓ Deleted {mongo_replies_deleted} replies from MongoDB")
+        
+        # Clear all data from vector store
+        vector_cleared = False
+        if vector_store.collection:
+            # Clear vector store completely
+            try:
+                vector_store.client.delete_collection(name="emails")
+                vector_store.collection = vector_store.client.get_or_create_collection(
+                    name="emails",
+                    metadata={"description": "Email semantic search with account isolation"}
+                )
+                vector_cleared = True
+                print(f"✓ Cleared all data from vector store")
+            except Exception as e:
+                print(f"⚠️  Error clearing vector store: {e}")
+        
+        # Delete all accounts
+        accounts_deleted = 0
+        if account_manager.accounts_collection is not None:
+            result = account_manager.clear_all_accounts()
+            if result.get('success'):
+                accounts_deleted = len(account_ids)
+                print(f"✓ Deleted {accounts_deleted} accounts")
+        
+        print(f"✅ All accounts and data deletion completed")
+        
+        return {
+            "success": True,
+            "message": "All accounts and data deleted successfully",
+            "accounts_deleted": accounts_deleted,
+            "emails_deleted": mongo_emails_deleted,
+            "replies_deleted": mongo_replies_deleted,
+            "vector_cleared": vector_cleared
+        }
+    except Exception as e:
+        print(f"❌ Error deleting all accounts: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.put("/api/accounts/{account_id}/activate")
 async def activate_account(account_id: int, toggle: bool = True):
     """Set an account as active (toggle mode by default - allows multiple active accounts)"""

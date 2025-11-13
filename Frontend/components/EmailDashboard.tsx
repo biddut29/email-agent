@@ -105,6 +105,14 @@ export default function EmailDashboard() {
     }
   }, [activeTab, customPrompt]);
 
+  // Clear reply body and AI response when a new email is selected
+  useEffect(() => {
+    if (selectedEmail) {
+      setReplyBody('');
+      setAiResponse('');
+    }
+  }, [selectedEmail]);
+
   const handleLogout = async () => {
     try {
       await api.logout();
@@ -392,9 +400,16 @@ export default function EmailDashboard() {
         'professional', 
         selectedEmail.message_id || undefined
       );
-      if (response.success) {
-        setAiResponse(response.response);
-        setReplyBody(response.response);
+      if (response.success && response.response) {
+        const responseText = response.response.trim();
+        console.log('AI Response received:', responseText);
+        setAiResponse(responseText);
+        setReplyBody(responseText);
+        
+        // Force React to update by using a small delay
+        setTimeout(() => {
+          setReplyBody(responseText);
+        }, 0);
       } else {
         alert('Failed to generate AI response');
       }
