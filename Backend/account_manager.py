@@ -116,9 +116,8 @@ class AccountManager:
                     }}
                 )
                 
-                # If no active account, make this one active
-                if not self.get_active_account():
-                    self.set_active_account(account_int_id)
+                # Security: Never automatically switch accounts
+                # Account will remain inactive until user explicitly activates it
                 
                 print(f"✓ Account updated: {email} (ID: {account_int_id})")
                 return {
@@ -148,9 +147,8 @@ class AccountManager:
             # Insert into MongoDB
             result = self.accounts_collection.insert_one(account_doc)
             
-            # If this is the first account, make it active
-            if self.get_account_count() == 1:
-                self.set_active_account(account_int_id)
+            # Security: Never automatically switch accounts
+            # Even the first account must be explicitly activated by the user
             
             print(f"✓ Account added: {email} (ID: {account_int_id})")
             return self.get_account(account_int_id)
@@ -167,14 +165,13 @@ class AccountManager:
             result = self.accounts_collection.delete_one({"id": account_id})
             
             if result.deleted_count > 0:
-                # If we deleted the active account, set another as active
+                # Security: Never automatically switch accounts
+                # If we deleted the active account, clear the active account ID
+                # User must explicitly activate another account
                 if self.active_account_id == account_id:
-                    accounts = self.get_all_accounts()
-                    if accounts:
-                        # Set first account as active
-                        self.set_active_account(accounts[0]['id'])
-                    else:
-                        self.active_account_id = None
+                    self.active_account_id = None
+                    # Also clear is_active flag for all remaining accounts
+                    self.accounts_collection.update_many({}, {"$set": {"is_active": False}})
                 
                 return {"success": True, "message": "Account removed"}
             else:
@@ -293,7 +290,7 @@ class AccountManager:
             return {"error": str(e)}
     
     def get_active_account(self) -> Optional[Dict]:
-        """Get the currently active account"""
+        """Get the currently active account (never auto-switches for security)"""
         if self.accounts_collection is None:
             return None
         
@@ -302,13 +299,8 @@ class AccountManager:
             if account:
                 return self._format_account(account)
             
-            # If no active account, try to get the first one
-            account = self.accounts_collection.find_one({})
-            if account:
-                formatted = self._format_account(account)
-                self.set_active_account(account['_id'])
-                return formatted
-            
+            # Security: Never automatically switch accounts
+            # Return None if no account is active - user must explicitly activate one
             return None
         except Exception as e:
             print(f"Error getting active account: {e}")
@@ -418,9 +410,8 @@ class AccountManager:
                     }}
                 )
                 
-                # If no active account, make this one active
-                if not self.get_active_account():
-                    self.set_active_account(account_id)
+                # Security: Never automatically switch accounts
+                # Account will remain inactive until user explicitly activates it
                 
                 print(f"✓ OAuth account updated: {email} (ID: {account_id})")
                 return account_id
@@ -443,9 +434,8 @@ class AccountManager:
             
             self.accounts_collection.insert_one(account_doc)
             
-            # If this is the first account, make it active
-            if self.get_account_count() == 1:
-                self.set_active_account(account_id)
+            # Security: Never automatically switch accounts
+            # Even the first account must be explicitly activated by the user
             
             print(f"✓ OAuth account created: {email} (ID: {account_id})")
             return account_id
