@@ -32,6 +32,7 @@ import {
   FileText,
   X as XIcon,
   Check,
+  Trash2,
 } from 'lucide-react';
 import {
   Select,
@@ -69,6 +70,7 @@ export default function EmailDashboard() {
   const [totalEmails, setTotalEmails] = useState(0);
   const [hasMore, setHasMore] = useState(false);
   const [loadingEmails, setLoadingEmails] = useState(false);
+  const [deletingAccount, setDeletingAccount] = useState<boolean>(false);
   const emailsPerPage = 20;
 
   // Load health status on mount
@@ -191,6 +193,46 @@ export default function EmailDashboard() {
     } catch (error) {
       console.error('Failed to save custom prompt:', error);
       alert(`Failed to save custom prompt: ${error}`);
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    if (!confirm('Are you sure you want to delete this account? This will permanently delete:\n- All emails in MongoDB\n- All data in Vector DB\n- The account itself\n\nThis action cannot be undone!')) {
+      return;
+    }
+
+    setDeletingAccount(true);
+    try {
+      const activeAccount = await api.getActiveAccount();
+      if (!activeAccount.success || !activeAccount.account) {
+        throw new Error('No active account found');
+      }
+
+      const accountId = activeAccount.account.id;
+      const result = await api.deleteAccount(accountId);
+
+      if (result.success) {
+        const remainingAccounts = result.remaining_accounts || 0;
+        
+        if (remainingAccounts === 0) {
+          // Last account deleted - logout
+          alert('Account deleted successfully. This was the last account. Logging out...');
+          await api.logout();
+          router.push('/login');
+        } else {
+          // Not the last account - reload
+          alert(`Account deleted successfully. ${remainingAccounts} account(s) remaining.`);
+          // Reload the page to refresh account state
+          window.location.reload();
+        }
+      } else {
+        throw new Error(result.message || 'Failed to delete account');
+      }
+    } catch (error) {
+      console.error('Error deleting account:', error);
+      alert(`Failed to delete account: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setDeletingAccount(false);
     }
   };
 
@@ -469,17 +511,6 @@ export default function EmailDashboard() {
             <AccountManager onAccountChange={handleAccountChange} />
           </div>
 
-          {/* Logout Button */}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleLogout}
-            className="flex items-center gap-2"
-          >
-            <LogOut className="w-4 h-4" />
-            Logout
-          </Button>
-
           {/* Status Card */}
           {healthStatus && (
             <Card>
@@ -513,11 +544,44 @@ export default function EmailDashboard() {
                         Custom Prompt Set
                       </Badge>
                     )}
+
+                    {/* Delete Account Button */}
+                    <Button
+                      onClick={handleDeleteAccount}
+                      variant="destructive"
+                      size="sm"
+                      disabled={deletingAccount}
+                      className="flex items-center gap-2"
+                      title="Delete this account and all its data"
+                    >
+                      {deletingAccount ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 animate-spin" />
+                          Deleting...
+                        </>
+                      ) : (
+                        <>
+                          <Trash2 className="w-4 h-4" />
+                          Delete Account
+                        </>
+                      )}
+                    </Button>
                   </div>
                 </div>
               </CardContent>
             </Card>
           )}
+
+          {/* Logout Button */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleLogout}
+            className="flex items-center gap-2"
+          >
+            <LogOut className="w-4 h-4" />
+            Logout
+          </Button>
         </div>
       </div>
 
