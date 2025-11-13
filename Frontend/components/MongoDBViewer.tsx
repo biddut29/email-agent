@@ -370,16 +370,16 @@ export default function MongoDBViewer() {
       {/* Stats Header */}
       <Card>
         <CardHeader>
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div>
-              <CardTitle className="flex items-center gap-2">
-                <Send className="w-5 h-5" />
+              <CardTitle className="flex items-center gap-2 text-lg sm:text-xl">
+                <Send className="w-4 h-4 sm:w-5 sm:h-5" />
                 Auto Reply History
               </CardTitle>
-              <CardDescription>View emails and AI-generated auto-replies</CardDescription>
+              <CardDescription className="text-xs sm:text-sm">View emails and AI-generated auto-replies</CardDescription>
             </div>
             <div className="flex gap-2">
-              <Button onClick={() => { loadStats(); loadEmails(); }} disabled={loading} variant="outline">
+              <Button onClick={() => { loadStats(); loadEmails(); }} disabled={loading} variant="outline" size="sm" className="w-full sm:w-auto">
                 <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
                 Refresh
               </Button>
@@ -387,7 +387,7 @@ export default function MongoDBViewer() {
           </div>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div>
               <p className="text-sm text-muted-foreground">Total Emails</p>
               <p className="text-2xl font-bold">{stats?.total_emails || 0}</p>
@@ -404,17 +404,17 @@ export default function MongoDBViewer() {
         </CardContent>
       </Card>
 
-      <div className="grid grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
         {/* Email List */}
         <Card>
           <CardHeader>
-            <CardTitle>Stored Emails ({totalEmails})</CardTitle>
-            <CardDescription>
+            <CardTitle className="text-base sm:text-lg">Stored Emails ({totalEmails})</CardTitle>
+            <CardDescription className="text-xs sm:text-sm">
               Page {page} of {totalPages}
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <ScrollArea className="h-[600px] pr-4">
+            <ScrollArea className="h-[400px] sm:h-[500px] lg:h-[600px] pr-2 sm:pr-4">
               <div className="space-y-3">
                 {emails.map((email, idx) => (
                   <Card
@@ -542,37 +542,39 @@ export default function MongoDBViewer() {
         {/* Email Detail with AI Analysis Tabs */}
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Mail className="w-5 h-5" />
+            <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
+              <Mail className="w-4 h-4 sm:w-5 sm:h-5" />
               Email Viewer
             </CardTitle>
-            <CardDescription>
+            <CardDescription className="text-xs sm:text-sm">
               {selectedEmail ? 'View email content and AI analysis' : 'Select an email to view details'}
             </CardDescription>
           </CardHeader>
           <CardContent>
             {selectedEmail ? (
               <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'details' | 'analysis' | 'reply')} className="w-full">
-                <TabsList className="grid w-full grid-cols-3">
-                  <TabsTrigger value="details" className="flex items-center gap-2">
-                    <Mail className="w-4 h-4" />
-                    Email Details
+                <TabsList className="grid w-full grid-cols-3 gap-1 sm:gap-0">
+                  <TabsTrigger value="details" className="flex items-center gap-1 sm:gap-2 text-xs sm:text-sm">
+                    <Mail className="w-3 h-3 sm:w-4 sm:h-4" />
+                    <span className="hidden sm:inline">Email Details</span>
+                    <span className="sm:hidden">Details</span>
                   </TabsTrigger>
-                  <TabsTrigger value="analysis" className="flex items-center gap-2">
-                    <Brain className="w-4 h-4" />
-                    AI Analysis
-                    {aiAnalysis && <Badge variant="secondary" className="ml-1">✓</Badge>}
+                  <TabsTrigger value="analysis" className="flex items-center gap-1 sm:gap-2 text-xs sm:text-sm">
+                    <Brain className="w-3 h-3 sm:w-4 sm:h-4" />
+                    <span className="hidden sm:inline">AI Analysis</span>
+                    <span className="sm:hidden">Analysis</span>
+                    {aiAnalysis && <Badge variant="secondary" className="ml-1 h-4 sm:h-5 px-1 text-xs">✓</Badge>}
                   </TabsTrigger>
-                  <TabsTrigger value="reply" className="flex items-center gap-2">
-                    <Send className="w-4 h-4" />
+                  <TabsTrigger value="reply" className="flex items-center gap-1 sm:gap-2 text-xs sm:text-sm">
+                    <Send className="w-3 h-3 sm:w-4 sm:h-4" />
                     Reply
-                    {replyData && <Badge variant="secondary" className="ml-1">✓</Badge>}
+                    {replyData && <Badge variant="secondary" className="ml-1 h-4 sm:h-5 px-1 text-xs">✓</Badge>}
                   </TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="details" className="mt-4">
-                  <ScrollArea className="h-[550px]">
-                    <div className="space-y-4 pr-4">
+                  <ScrollArea className="h-[400px] sm:h-[450px] lg:h-[550px]">
+                    <div className="space-y-4 pr-2 sm:pr-4">
                       <div>
                         <label className="text-sm font-semibold text-muted-foreground">Subject</label>
                         <p className="text-sm mt-1 font-medium">{selectedEmail.subject}</p>
@@ -657,20 +659,20 @@ export default function MongoDBViewer() {
                 </TabsContent>
 
                 <TabsContent value="analysis" className="mt-4">
-                  <ScrollArea className="h-[550px]">
-                    <div className="space-y-4 pr-4">
+                  <ScrollArea className="h-[400px] sm:h-[450px] lg:h-[550px]">
+                    <div className="space-y-4 pr-2 sm:pr-4">
                       {loadingAnalysis ? (
                         <div className="flex items-center justify-center py-12">
                           <RefreshCw className="w-8 h-8 animate-spin text-primary" />
-                          <p className="ml-3 text-muted-foreground">Loading AI analysis...</p>
+                          <p className="ml-3 text-muted-foreground text-sm">Loading AI analysis...</p>
                         </div>
                       ) : aiAnalysis ? (
                         <>
                           {/* Analysis Header */}
-                          <div className="flex items-center gap-2 p-4 bg-gradient-to-r from-purple-50 to-blue-50 border border-purple-200 rounded-lg">
-                            <Sparkles className="w-5 h-5 text-purple-600" />
+                          <div className="flex items-center gap-2 p-3 sm:p-4 bg-gradient-to-r from-purple-50 to-blue-50 border border-purple-200 rounded-lg">
+                            <Sparkles className="w-4 h-4 sm:w-5 sm:h-5 text-purple-600" />
                             <div className="flex-1">
-                              <h3 className="font-semibold text-purple-900">AI-Powered Email Analysis</h3>
+                              <h3 className="font-semibold text-purple-900 text-sm sm:text-base">AI-Powered Email Analysis</h3>
                               <p className="text-xs text-purple-700 flex items-center gap-1 mt-1">
                                 <Clock className="w-3 h-3" />
                                 Analyzed: {new Date(aiAnalysis.analyzed_at).toLocaleString()}
@@ -679,7 +681,7 @@ export default function MongoDBViewer() {
                           </div>
 
                           {/* Category and Urgency */}
-                          <div className="grid grid-cols-2 gap-4">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                             <div className="p-4 border rounded-lg">
                               <label className="text-sm font-semibold text-muted-foreground">Category</label>
                               <div className="mt-2">
@@ -788,14 +790,14 @@ export default function MongoDBViewer() {
                                   placeholder="Edit the suggested reply before sending..."
                                   className="min-h-[150px] bg-green-50 border-green-200 focus:border-green-400"
                                 />
-                                <div className="flex items-center justify-between">
+                                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0">
                                   <p className="text-xs text-muted-foreground">
                                     ✏️ You can edit the AI suggestion before sending
                                   </p>
                                   <Button
                                     onClick={sendReply}
                                     disabled={sendingReply || !replyText.trim()}
-                                    className="bg-green-600 hover:bg-green-700"
+                                    className="bg-green-600 hover:bg-green-700 w-full sm:w-auto"
                                     style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                                   >
                                     {sendingReply ? (
@@ -832,8 +834,8 @@ export default function MongoDBViewer() {
                 </TabsContent>
 
                 <TabsContent value="reply" className="mt-4">
-                  <ScrollArea className="h-[550px]">
-                    <div className="space-y-4 pr-4">
+                  <ScrollArea className="h-[400px] sm:h-[450px] lg:h-[550px]">
+                    <div className="space-y-4 pr-2 sm:pr-4">
                       {loadingReply ? (
                         <div className="flex items-center justify-center py-12">
                           <RefreshCw className="w-8 h-8 animate-spin text-primary" />
@@ -908,10 +910,10 @@ export default function MongoDBViewer() {
                 </TabsContent>
               </Tabs>
             ) : (
-              <div className="h-[600px] flex items-center justify-center text-muted-foreground">
-                <div className="text-center">
-                  <Mail className="w-16 h-16 mx-auto mb-4 opacity-30" />
-                  <p>Select an email to view details and AI analysis</p>
+              <div className="h-[400px] sm:h-[500px] lg:h-[600px] flex items-center justify-center text-muted-foreground">
+                <div className="text-center px-4">
+                  <Mail className="w-12 h-12 sm:w-16 sm:h-16 mx-auto mb-4 opacity-30" />
+                  <p className="text-sm sm:text-base">Select an email to view details and AI analysis</p>
                 </div>
               </div>
             )}
