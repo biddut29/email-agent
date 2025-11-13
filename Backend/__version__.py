@@ -1,4 +1,4 @@
 """Version information for Email Agent Backend"""
 
-__version__ = "1.1.0"
+__version__ = "1.1.1"
 
