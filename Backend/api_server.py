@@ -193,10 +193,17 @@ async def startup_event():
                 )
                 print(f"✓ Updated password for existing account: {config.EMAIL_ADDRESS}")
             
-            # Ensure it's active
-            if not existing_account.get('is_active'):
-                account_manager.set_active_account(existing_account['id'])
-                print(f"✓ Set existing account as active: {config.EMAIL_ADDRESS}")
+            # Only set as active if no account is currently active
+            # This prevents switching accounts on backend restart
+            current_active = account_manager.get_active_account()
+            if not current_active:
+                # No active account - set the .env account as active
+                if not existing_account.get('is_active'):
+                    account_manager.set_active_account(existing_account['id'])
+                    print(f"✓ Set existing account as active (no active account found): {config.EMAIL_ADDRESS}")
+            else:
+                # Another account is already active - don't switch
+                print(f"ℹ️  Account from .env exists but not set as active (another account is active): {config.EMAIL_ADDRESS}")
         else:
             # Account doesn't exist - add it
             result = account_manager.add_account(
