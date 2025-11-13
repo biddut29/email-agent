@@ -300,6 +300,13 @@ class EmailAgentAPI {
     }>('/api/search/stats');
   }
 
+  async getVectorCount() {
+    return this.request<{
+      success: boolean;
+      count: number;
+    }>('/api/vector/count');
+  }
+
   async clearVectorStore() {
     return this.request<{
       success: boolean;
@@ -698,6 +705,21 @@ class EmailAgentAPI {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ enabled })
     });
+  }
+
+  // Vector database endpoints
+  async getVectorCount(): Promise<{
+    success: boolean;
+    count: number;
+    account_id?: number;
+    error?: string;
+  }> {
+    return this.request<{
+      success: boolean;
+      count: number;
+      account_id?: number;
+      error?: string;
+    }>('/api/vector/count');
   }
 
   // Authentication endpoints
