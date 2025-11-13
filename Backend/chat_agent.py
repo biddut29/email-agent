@@ -127,30 +127,44 @@ Email context is provided below. Use this information to answer user questions."
                 {"role": "system", "content": self._get_system_prompt()}
             ]
             
-            # Add email context if available and requested
-            if include_context and self.email_context:
-                # If vector search is enabled, get most relevant emails
+            # Add email context using RAG (Retrieval Augmented Generation)
+            # Always use vector search if available for better context
+            if include_context:
+                context_message = ""
+                
+                # Prioritize vector search (RAG) for semantic search
                 if use_vector_search:
                     try:
                         from vector_store import vector_store
-                        relevant_results = vector_store.get_relevant_emails_for_chat(user_message, n_results=5)
-                        if relevant_results:
-                            context_parts = ["Most relevant emails for your query:\n"]
-                            for i, result in enumerate(relevant_results, 1):
-                                context_parts.append(f"\nEmail {i}:")
-                                context_parts.append(result.get('document', ''))
-                            context_message = "\n".join(context_parts)
-                        else:
-                            context_message = self._format_email_context()
-                    except:
-                        context_message = self._format_email_context()
-                else:
+                        if vector_store.collection:
+                            relevant_results = vector_store.get_relevant_emails_for_chat(user_message, n_results=5)
+                            if relevant_results:
+                                context_parts = ["Relevant emails from your inbox (found via semantic search):\n"]
+                                for i, result in enumerate(relevant_results, 1):
+                                    context_parts.append(f"\n--- Email {i} ---")
+                                    context_parts.append(result.get('document', ''))
+                                    # Add metadata if available
+                                    if result.get('metadata'):
+                                        meta = result['metadata']
+                                        if meta.get('subject'):
+                                            context_parts.append(f"Subject: {meta['subject']}")
+                                        if meta.get('from'):
+                                            context_parts.append(f"From: {meta['from']}")
+                                context_message = "\n".join(context_parts)
+                    except Exception as e:
+                        print(f"Vector search error: {e}")
+                        context_message = ""
+                
+                # Fallback to email_context if vector search didn't provide results
+                if not context_message and self.email_context:
                     context_message = self._format_email_context()
                 
-                messages.append({
-                    "role": "system", 
-                    "content": f"Current email context:\n\n{context_message}"
-                })
+                # Add context to messages if we have any
+                if context_message:
+                    messages.append({
+                        "role": "system", 
+                        "content": f"Email context (use this information to answer the user's question):\n\n{context_message}\n\nAnswer the user's question based on the email context above. If the information is not in the emails, say so."
+                    })
             
             # Add conversation history (last 10 messages)
             messages.extend(self.conversation_history[-10:])

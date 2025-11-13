@@ -432,6 +432,7 @@ class EmailAgentAPI {
         smtp_server: string;
         smtp_port: number;
         is_active: boolean;
+        custom_prompt?: string;
       }>;
       active_account_id: number | null;
     }>('/api/accounts');
@@ -603,6 +604,50 @@ class EmailAgentAPI {
   }
 
   // Auto-reply endpoints
+  async getActiveAccountCustomPrompt() {
+    try {
+      // Fetch all accounts to get the active one with custom_prompt
+      const response = await this.getAccounts();
+      if (response.success && response.accounts) {
+        const activeAccount = response.accounts.find((acc: any) => acc.is_active);
+        return activeAccount?.custom_prompt || '';
+      }
+      return '';
+    } catch (error) {
+      console.error('Failed to get custom prompt:', error);
+      return '';
+    }
+  }
+
+  async updateActiveAccountCustomPrompt(customPrompt: string) {
+    try {
+      const response = await this.getActiveAccount();
+      if (!response.success || !response.account || !response.account.id) {
+        throw new Error('No active account found');
+      }
+      const accountId = response.account.id;
+      const updateResponse = await this.request<{ success: boolean; custom_prompt: string; message: string }>(
+        `/api/accounts/${accountId}/custom-prompt`,
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ custom_prompt: customPrompt })
+        }
+      );
+      return updateResponse;
+    } catch (error) {
+      console.error('Failed to update custom prompt:', error);
+      throw error;
+    }
+  }
+
+  async getDefaultPrompt() {
+    return this.request<{
+      success: boolean;
+      default_prompt: string;
+    }>('/api/accounts/default-prompt').then(response => response.default_prompt);
+  }
+
   async getAutoReplyStatus() {
     return this.request<{
       success: boolean;

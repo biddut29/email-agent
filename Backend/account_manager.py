@@ -141,6 +141,7 @@ class AccountManager:
                 "smtp_port": smtp_port,
                 "is_active": False,
                 "auto_reply_enabled": True,  # Default to enabled
+                "custom_prompt": "",  # Custom prompt for AI responses
                 "created_at": datetime.utcnow()
             }
             
@@ -319,18 +320,24 @@ class AccountManager:
             return {"error": "MongoDB not available"}
         
         try:
-            allowed_fields = ['email', 'password', 'imap_server', 'imap_port', 'smtp_server', 'smtp_port', 'auto_reply_enabled']
+            allowed_fields = ['email', 'password', 'imap_server', 'imap_port', 'smtp_server', 'smtp_port', 'auto_reply_enabled', 'custom_prompt']
             updates = {k: v for k, v in kwargs.items() if k in allowed_fields}
             
             if not updates:
                 return {"error": "No valid fields to update"}
+            
+            # Check if account exists first
+            existing_account = self.get_account(account_id)
+            if not existing_account:
+                return {"error": "Account not found"}
             
             result = self.accounts_collection.update_one(
                 {"id": account_id},
                 {"$set": updates}
             )
             
-            if result.modified_count > 0:
+            # Return success even if modified_count is 0 (value didn't change)
+            if result.matched_count > 0:
                 return {"success": True, "account": self.get_account(account_id)}
             else:
                 return {"error": "Account not found"}
@@ -495,6 +502,7 @@ class AccountManager:
             "smtp_port": account_doc.get('smtp_port', 587),
             "is_active": bool(account_doc.get('is_active', False)),
             "auto_reply_enabled": bool(auto_reply_enabled),
+            "custom_prompt": account_doc.get('custom_prompt', ''),
             "created_at": account_doc.get('created_at', datetime.utcnow())
         }
         

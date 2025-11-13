@@ -399,14 +399,23 @@ class MongoDBManager:
             
             # Add date filters if provided
             if date_from or date_to:
+                # Use string comparison with date bounds (works reliably with date_str format)
                 date_query = {}
                 if date_from:
-                    date_query['$gte'] = date_from
+                    # Match from start of day
+                    date_from_start = f"{date_from} 00:00:00"
+                    date_query['$gte'] = date_from_start
                 if date_to:
-                    date_query['$lte'] = date_to
+                    # Match until end of day (use < next day to include all of end date)
+                    from datetime import datetime, timedelta
+                    date_obj = datetime.strptime(date_to, "%Y-%m-%d")
+                    next_day = date_obj + timedelta(days=1)
+                    date_to_end = next_day.strftime("%Y-%m-%d 00:00:00")
+                    date_query['$lt'] = date_to_end  # Use $lt (less than) to exclude next day
                 
                 if date_query:
                     query['date_str'] = date_query
+                    print(f"🔍 MongoDB date filter: {date_query}, account_id={account_id}")
             
             # Add unread filter
             if unread_only:
@@ -421,6 +430,7 @@ class MongoDBManager:
             
             # Query with sorting (newest first) and pagination
             # Optimized query with index hint for faster performance
+            print(f"🔍 Executing MongoDB query: {query}")
             cursor = self.emails_collection.find(query, projection).sort('date_str', DESCENDING)
             
             # Try to use index hint for better performance (if index exists)
@@ -430,7 +440,40 @@ class MongoDBManager:
                 # Index might not exist yet, continue without hint
                 pass
             
+            # Test query before skip/limit to see total matches
+            test_count = self.emails_collection.count_documents(query)
+            print(f"🔍 Query matches {test_count} emails (before skip/limit)")
+            
             emails = list(cursor.skip(skip).limit(limit))
+            print(f"🔍 Query returned {len(emails)} emails (after skip={skip}, limit={limit})")
+            
+            # Debug: Print sample date_str values if emails found
+            if emails and (date_from or date_to):
+                sample_dates = [e.get('date_str', 'N/A') for e in emails[:3]]
+                print(f"✅ Found {len(emails)} emails with date filter. Sample date_str values: {sample_dates}")
+            elif not emails and (date_from or date_to):
+                # Check if there are any emails without date filter to debug
+                test_query = {"account_id": account_id}
+                test_cursor = self.emails_collection.find(test_query, {'date_str': 1, 'subject': 1, 'date': 1}).limit(10).sort('date_str', DESCENDING)
+                test_emails = list(test_cursor)
+                if test_emails:
+                    sample_dates = [e.get('date_str', 'N/A') for e in test_emails]
+                    sample_subjects = [e.get('subject', 'N/A')[:30] for e in test_emails]
+                    total_count = self.emails_collection.count_documents(test_query)
+                    print(f"❌ No emails found with date filter!")
+                    print(f"   Total emails in DB for account {account_id}: {total_count}")
+                    print(f"   Date filter: from={date_from}, to={date_to}")
+                    print(f"   Query used: {query}")
+                    print(f"   Latest 10 emails in DB (date_str): {sample_dates}")
+                    print(f"   Latest 10 subjects: {sample_subjects}")
+                    
+                    # Test the query manually to see what's wrong
+                    test_result = list(self.emails_collection.find(query, {'date_str': 1, 'subject': 1}).limit(5))
+                    print(f"   Query result count: {len(test_result)}")
+                    if test_result:
+                        print(f"   Query result dates: {[e.get('date_str') for e in test_result]}")
+                else:
+                    print(f"❌ No emails found in MongoDB for account_id={account_id}")
             
             return emails
         

@@ -19,7 +19,7 @@ from itsdangerous import URLSafeTimedSerializer
 from email_agent import EmailAgent
 from email_receiver import EmailReceiver
 from email_sender import EmailSender
-from ai_agent import AIAgent
+from ai_agent import AIAgent, DEFAULT_PROMPT_TEMPLATE
 from chat_agent import ChatAgent
 from account_manager import AccountManager
 from vector_store import vector_store
@@ -128,6 +128,10 @@ class AccountUpdateRequest(BaseModel):
     imap_port: Optional[int] = None
     smtp_server: Optional[str] = None
     smtp_port: Optional[int] = None
+
+
+class CustomPromptRequest(BaseModel):
+    custom_prompt: str
 
 
 class SemanticSearchRequest(BaseModel):
@@ -1355,15 +1359,22 @@ async def generate_response(
         
         # Add sender information to email_data for proper signature generation
         active_account = account_manager.get_active_account()
+        custom_prompt = None
         if active_account:
             sender_email = active_account.get('email', '')
             if sender_email:
                 sender_name = sender_email.split('@')[0].replace('.', ' ').replace('_', ' ').title()
                 email_data['sender_name'] = sender_name
                 email_data['reply_account'] = active_account
+            # Get custom prompt for this account
+            custom_prompt = active_account.get('custom_prompt', '')
+            if custom_prompt and custom_prompt.strip():
+                print(f"📝 Using custom prompt for account {active_account.get('email')}")
+            else:
+                print(f"📝 Using default prompt for account {active_account.get('email')}")
         
         ai_agent = email_agent.ai_agent
-        response_body = ai_agent.generate_response(email_data, tone=tone)
+        response_body = ai_agent.generate_response(email_data, tone=tone, custom_prompt=custom_prompt)
         
         return {
             "success": True,
@@ -1770,6 +1781,38 @@ async def toggle_account_auto_reply(account_id: int, enabled: bool):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/api/accounts/{account_id}/custom-prompt")
+async def update_account_custom_prompt(account_id: int, request: CustomPromptRequest):
+    """Update custom prompt for a specific account"""
+    try:
+        result = account_manager.update_account(account_id, custom_prompt=request.custom_prompt)
+        
+        if 'error' in result:
+            raise HTTPException(status_code=404, detail=result['error'])
+        
+        account = account_manager.get_account(account_id)
+        print(f"📝 Custom prompt updated for account: {account.get('email') if account else account_id}")
+        
+        return {
+            "success": True,
+            "custom_prompt": request.custom_prompt,
+            "message": "Custom prompt updated successfully"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/accounts/default-prompt")
+async def get_default_prompt():
+    """Get the default prompt template"""
+    return {
+        "success": True,
+        "default_prompt": DEFAULT_PROMPT_TEMPLATE
+    }
 
 
 @app.get("/api/accounts/active")
@@ -2300,11 +2343,14 @@ async def get_single_email(message_id: str):
         if not active_account:
             raise HTTPException(status_code=400, detail="No active account")
         
-        # Find email by message_id (with full body - exclude_bodies=False)
+        # Find email by message_id or gmail_synthetic_id (with full body - no projection to exclude bodies)
+        # Handle both actual Message-ID and synthetic Gmail ID formats
         email_doc = mongodb_manager.emails_collection.find_one({
-            "message_id": message_id,
-            "account_id": active_account['id']
-        }, {'_id': 0})
+            "$or": [
+                {"message_id": message_id, "account_id": active_account['id']},
+                {"gmail_synthetic_id": message_id, "account_id": active_account['id']}
+            ]
+        }, {'_id': 0})  # Explicitly include all fields including text_body and html_body
         
         if not email_doc:
             raise HTTPException(status_code=404, detail="Email not found")
