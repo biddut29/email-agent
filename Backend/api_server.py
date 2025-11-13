@@ -134,6 +134,10 @@ class CustomPromptRequest(BaseModel):
     custom_prompt: str
 
 
+class AutoReplyToggleRequest(BaseModel):
+    enabled: bool
+
+
 class SemanticSearchRequest(BaseModel):
     query: str
     n_results: int = 10
@@ -2545,15 +2549,16 @@ async def get_auto_reply_status():
 
 
 @app.post("/api/auto-reply/toggle")
-async def toggle_auto_reply(enabled: bool):
+async def toggle_auto_reply(request: AutoReplyToggleRequest):
     """Toggle auto-reply on or off"""
     try:
         if not email_agent:
             raise HTTPException(status_code=500, detail="Email agent not initialized")
         
+        enabled = request.enabled
         email_agent.auto_reply_enabled = enabled
         status_text = "enabled" if enabled else "disabled"
-        print(f"🤖 Auto-reply {status_text}")
+        print(f"🤖 Auto-reply {status_text} (global setting updated)")
         
         return {
             "success": True,
