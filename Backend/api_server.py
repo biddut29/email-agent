@@ -1697,11 +1697,15 @@ async def delete_account(account_id: int):
         if 'error' in result:
             raise HTTPException(status_code=404, detail=result['error'])
         
+        # Get remaining account count after deletion
+        remaining_count = account_manager.get_account_count()
+        
         return {
             "success": True,
             "message": "Account and all related data deleted successfully",
             "mongo_deleted": mongo_result.get('deleted', 0),
-            "vector_deleted": vector_result.get('deleted', 0)
+            "vector_deleted": vector_result.get('deleted', 0),
+            "remaining_accounts": remaining_count
         }
     except HTTPException:
         raise

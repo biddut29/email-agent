@@ -463,7 +463,13 @@ class EmailAgentAPI {
   }
 
   async deleteAccount(accountId: number) {
-    return this.request<{ success: boolean; message: string }>(
+    return this.request<{ 
+      success: boolean; 
+      message: string;
+      mongo_deleted?: number;
+      vector_deleted?: number;
+      remaining_accounts?: number;
+    }>(
       `/api/accounts/${accountId}`,
       {
         method: 'DELETE',
