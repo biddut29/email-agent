@@ -2408,20 +2408,47 @@ async def get_mongodb_emails(
         )
         print(f"🔍 get_mongodb_emails returned: {len(emails)} emails")
         
-        # Get total count for pagination (optimized - skip expensive count_documents)
-        # Use smart estimation based on returned results instead of slow exact count
+        # Get accurate total count for pagination (using same query filters)
         try:
-            if len(emails) < limit:
-                # Got fewer than limit - we're at the end, exact count
-                total_count = skip + len(emails)
+            # Build the same query used in get_emails to get accurate count
+            query = {"account_id": active_account['id']}
+            
+            # Add date filters if provided (same logic as in get_emails)
+            if date_from or date_to:
+                date_query = {}
+                if date_from:
+                    date_from_start = f"{date_from} 00:00:00"
+                    date_query['$gte'] = date_from_start
+                if date_to:
+                    from datetime import datetime, timedelta
+                    date_obj = datetime.strptime(date_to, "%Y-%m-%d")
+                    next_day = date_obj + timedelta(days=1)
+                    date_to_end = next_day.strftime("%Y-%m-%d 00:00:00")
+                    date_query['$lt'] = date_to_end
+                
+                if date_query:
+                    query['date_str'] = date_query
+                    print(f"🔍 Count query with date filter: {query}")
+            
+            # Add unread filter if needed
+            if unread_only:
+                query['is_read'] = False
+            
+            # Get accurate count using the same query
+            if mongodb_manager.emails_collection is not None:
+                total_count = mongodb_manager.emails_collection.count_documents(query)
+                print(f"🔍 Accurate total count: {total_count} emails (matching query: {query})")
             else:
-                # Got full limit - estimate there might be more
-                # Use a simple estimate: skip + limit + some buffer
-                total_count = skip + len(emails) + limit  # Estimate
+                # Fallback if collection not available
+                total_count = skip + len(emails) + (limit if len(emails) == limit else 0)
+                print(f"⚠️  MongoDB collection not available, using estimate: {total_count}")
         except Exception as e:
-            print(f"Warning: Could not calculate total count: {e}")
+            import traceback
+            print(f"❌ Error calculating total count: {e}")
+            print(f"❌ Traceback: {traceback.format_exc()}")
             # Fallback: estimate based on returned emails
             total_count = skip + len(emails) + (limit if len(emails) == limit else 0)
+            print(f"⚠️  Using fallback estimate: {total_count}")
         
         return {
             "success": True,
