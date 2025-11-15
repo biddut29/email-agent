@@ -790,6 +790,43 @@ class EmailAgentAPI {
     localStorage.removeItem('session_token');
     return result;
   }
+
+  // Attachment methods
+  async listAttachments(messageId: string): Promise<{
+    success: boolean;
+    message_id: string;
+    has_attachments: boolean;
+    count: number;
+    attachments: Array<{
+      original_filename: string;
+      saved_filename: string;
+      content_type: string;
+      size: number;
+      file_path: string;
+    }>;
+  }> {
+    return this.request(`/api/emails/${messageId}/attachments`);
+  }
+
+  async getAttachment(messageId: string, savedFilename: string): Promise<{
+    success: boolean;
+    original_filename: string;
+    saved_filename: string;
+    content_type: string;
+    size: number;
+    data: string; // base64
+  }> {
+    return this.request(`/api/emails/${messageId}/attachments/${encodeURIComponent(savedFilename)}`);
+  }
+
+  async downloadAttachment(messageId: string, savedFilename: string): Promise<void> {
+    const url = `${this.baseUrl}/api/emails/${messageId}/attachments/${encodeURIComponent(savedFilename)}/download`;
+    window.open(url, '_blank');
+  }
+
+  async getStorageStats(): Promise<any> {
+    return this.request('/api/storage/stats');
+  }
 }
 
 export const api = new EmailAgentAPI();

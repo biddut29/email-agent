@@ -5,7 +5,7 @@ Provides REST API endpoints for the frontend
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Cookie
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, RedirectResponse, JSONResponse
+from fastapi.responses import StreamingResponse, RedirectResponse, JSONResponse, Response
 from pydantic import BaseModel, EmailStr
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
@@ -15,6 +15,8 @@ import json as json_lib
 import os
 import secrets
 from itsdangerous import URLSafeTimedSerializer
+import base64
+import mimetypes
 
 from email_agent import EmailAgent
 from email_receiver import EmailReceiver
@@ -27,6 +29,7 @@ from mongodb_manager import mongodb_manager
 from gmail_api_client import GmailAPIClient
 from auth_manager import AuthManager
 from config_manager import ConfigManager
+from attachment_storage import attachment_storage
 from __version__ import __version__ as backend_version
 import config
 
@@ -236,6 +239,155 @@ class SemanticSearchRequest(BaseModel):
     query: str
     n_results: int = 10
     filter_metadata: Optional[Dict[str, Any]] = None
+
+
+# ============================================================================
+# ATTACHMENT ENDPOINTS (Hybrid Storage)
+# ============================================================================
+
+@app.get("/api/emails/{message_id}/attachments")
+async def list_email_attachments(message_id: str, session_token: str = Cookie(None)):
+    """List all attachments for an email"""
+    try:
+        if not session_token or session_token not in active_sessions:
+            raise HTTPException(status_code=401, detail="Not authenticated")
+        
+        session_data = active_sessions[session_token]
+        account_id = session_data.get('account_id')
+        
+        email = mongodb_manager.emails_collection.find_one({
+            "message_id": message_id,
+            "account_id": account_id
+        })
+        
+        if not email:
+            raise HTTPException(status_code=404, detail="Email not found")
+        
+        return {
+            "success": True,
+            "message_id": message_id,
+            "has_attachments": email.get('has_attachments', False),
+            "count": len(email.get('attachments', [])),
+            "attachments": email.get('attachments', [])
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/emails/{message_id}/attachments/{saved_filename:path}")
+async def get_email_attachment(message_id: str, saved_filename: str, 
+                               session_token: str = Cookie(None)):
+    """Get attachment (returns base64)"""
+    try:
+        if not session_token or session_token not in active_sessions:
+            raise HTTPException(status_code=401, detail="Not authenticated")
+        
+        session_data = active_sessions[session_token]
+        account_id = session_data.get('account_id')
+        
+        binary_data = attachment_storage.get_attachment(
+            account_id=account_id,
+            message_id=message_id,
+            saved_filename=saved_filename
+        )
+        
+        if binary_data is None:
+            raise HTTPException(status_code=404, detail="Attachment not found")
+        
+        email = mongodb_manager.emails_collection.find_one({
+            "message_id": message_id,
+            "account_id": account_id
+        })
+        
+        att_metadata = None
+        if email and email.get('attachments'):
+            att_metadata = next(
+                (a for a in email['attachments'] if a.get('saved_filename') == saved_filename),
+                None
+            )
+        
+        content_type = att_metadata.get('content_type') if att_metadata else None
+        if not content_type:
+            content_type, _ = mimetypes.guess_type(saved_filename)
+            if content_type is None:
+                content_type = 'application/octet-stream'
+        
+        return {
+            "success": True,
+            "original_filename": att_metadata.get('original_filename', saved_filename) if att_metadata else saved_filename,
+            "saved_filename": saved_filename,
+            "content_type": content_type,
+            "size": len(binary_data),
+            "data": base64.b64encode(binary_data).decode('utf-8')
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/emails/{message_id}/attachments/{saved_filename:path}/download")
+async def download_email_attachment(message_id: str, saved_filename: str,
+                                   session_token: str = Cookie(None)):
+    """Download attachment (triggers browser download)"""
+    try:
+        if not session_token or session_token not in active_sessions:
+            raise HTTPException(status_code=401, detail="Not authenticated")
+        
+        session_data = active_sessions[session_token]
+        account_id = session_data.get('account_id')
+        
+        binary_data = attachment_storage.get_attachment(
+            account_id=account_id,
+            message_id=message_id,
+            saved_filename=saved_filename
+        )
+        
+        if binary_data is None:
+            raise HTTPException(status_code=404, detail="Attachment not found")
+        
+        email = mongodb_manager.emails_collection.find_one({
+            "message_id": message_id,
+            "account_id": account_id
+        })
+        
+        original_filename = saved_filename
+        content_type = 'application/octet-stream'
+        
+        if email and email.get('attachments'):
+            att_metadata = next(
+                (a for a in email['attachments'] if a.get('saved_filename') == saved_filename),
+                None
+            )
+            if att_metadata:
+                original_filename = att_metadata.get('original_filename', saved_filename)
+                content_type = att_metadata.get('content_type', content_type)
+        
+        return Response(
+            content=binary_data,
+            media_type=content_type,
+            headers={
+                "Content-Disposition": f'attachment; filename="{original_filename}"'
+            }
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/storage/stats")
+async def get_storage_statistics():
+    """Get attachment storage statistics"""
+    try:
+        return attachment_storage.get_storage_stats()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # Startup event
@@ -2034,6 +2186,10 @@ async def delete_account(account_id: int):
                 print(f"✓ Deleted {vector_result.get('deleted', 0)} emails from vector store for account {account_id}")
         
         executor.shutdown(wait=False)
+        
+        # Delete attachments from filesystem
+        deleted_files = attachment_storage.delete_account_attachments(account_id)
+        print(f"✓ Deleted {deleted_files} attachment files for account {account_id}")
         
         # Finally, delete the account itself
         result = account_manager.remove_account(account_id)

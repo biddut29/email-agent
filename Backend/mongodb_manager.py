@@ -35,8 +35,18 @@ class MongoDBManager:
             self.ai_analysis_collection = self.db['ai_analysis']
             self.replies_collection = self.db['replies']
             
-            # Create indexes for better query performance
-            self._create_indexes()
+            # Create indexes for better query performance (async, don't block startup)
+            # Run in background to avoid blocking startup
+            import threading
+            def create_indexes_async():
+                try:
+                    self._create_indexes()
+                except Exception as e:
+                    # Index creation errors are non-critical, just log
+                    pass
+            
+            thread = threading.Thread(target=create_indexes_async, daemon=True)
+            thread.start()
             
             print(f"✓ MongoDB connected: {db_name}")
             # Skip counting all documents on startup (can be very slow with many emails)
@@ -119,6 +129,7 @@ class MongoDBManager:
     def save_emails(self, emails: List[Dict], account_id: int) -> Dict:
         """
         Save emails to MongoDB using bulk operations for better performance
+        If emails have attachments with binary_data, save to filesystem first
         
         Args:
             emails: List of email dictionaries
@@ -135,12 +146,51 @@ class MongoDBManager:
                 return {"success": True, "inserted": 0, "updated": 0, "total": 0}
             
             from pymongo import UpdateOne
+            from attachment_storage import attachment_storage
             
             # Prepare bulk operations
             bulk_ops = []
             now = datetime.utcnow()
             
             for email in emails:
+                # Process attachments if present
+                if email.get('attachments'):
+                    processed_attachments = []
+                    
+                    for att in email['attachments']:
+                        # If attachment has binary_data, save to filesystem
+                        if 'binary_data' in att:
+                            result = attachment_storage.save_attachment(
+                                account_id=account_id,
+                                message_id=email.get('message_id'),
+                                filename=att.get('filename', 'attachment'),
+                                binary_data=att['binary_data']
+                            )
+                            
+                            if result['success']:
+                                # Store metadata (not binary data)
+                                processed_attachments.append({
+                                    "original_filename": result['original_filename'],
+                                    "saved_filename": result['saved_filename'],
+                                    "content_type": att.get('content_type', 'application/octet-stream'),
+                                    "size": result['size'],
+                                    "file_path": result['relative_path'],
+                                    "hash": result['hash'],
+                                    "storage": "filesystem"
+                                })
+                            else:
+                                print(f"Failed to save attachment: {att.get('filename')}")
+                            
+                            # Remove binary_data from email doc
+                            del att['binary_data']
+                        else:
+                            # Attachment already processed or only metadata
+                            processed_attachments.append(att)
+                    
+                    # Replace attachments with processed version
+                    email['attachments'] = processed_attachments
+                    email['has_attachments'] = len(processed_attachments) > 0
+                
                 # Add metadata
                 email['account_id'] = account_id
                 email['saved_at'] = now
