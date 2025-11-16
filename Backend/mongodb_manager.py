@@ -169,7 +169,7 @@ class MongoDBManager:
                             
                             if result['success']:
                                 # Store metadata (not binary data)
-                                processed_attachments.append({
+                                processed_att = {
                                     "original_filename": result['original_filename'],
                                     "saved_filename": result['saved_filename'],
                                     "content_type": att.get('content_type', 'application/octet-stream'),
@@ -177,7 +177,12 @@ class MongoDBManager:
                                     "file_path": result['relative_path'],
                                     "hash": result['hash'],
                                     "storage": "filesystem"
-                                })
+                                }
+                                # Preserve text_content if it was extracted (OCR/PDF text)
+                                if att.get('text_content'):
+                                    processed_att['text_content'] = att['text_content']
+                                
+                                processed_attachments.append(processed_att)
                             else:
                                 print(f"Failed to save attachment: {att.get('filename')}")
                             
@@ -195,12 +200,14 @@ class MongoDBManager:
                 email['account_id'] = account_id
                 email['saved_at'] = now
                 
-                # Create sortable date string from email date
-                if 'date' in email and 'date_str' not in email:
+                # Always recalculate date_str from date to ensure it's correct and sortable
+                # This fixes existing emails with incorrect date_str and ensures consistency
+                if 'date' in email:
                     try:
                         email_date = parsedate_to_datetime(email['date'])
                         email['date_str'] = email_date.strftime('%Y-%m-%d %H:%M:%S')
                     except:
+                        # If date parsing fails, use current time as fallback
                         email['date_str'] = now.strftime('%Y-%m-%d %H:%M:%S')
                 
                 # Use message_id as unique identifier
@@ -463,6 +470,33 @@ class MongoDBManager:
                     date_to_end = next_day.strftime("%Y-%m-%d 00:00:00")
                     date_query['$lt'] = date_to_end  # Use $lt (less than) to exclude next day
                 
+                # Special handling for "today" (when date_from == date_to)
+                # Use regex to match date prefix - this handles timezone variations better
+                if date_from and date_to and date_from == date_to:
+                    # For same-day queries, use regex to match any time on that date
+                    # This is more reliable than time-based comparison due to timezone issues
+                    date_prefix = date_from  # e.g., "2025-11-15"
+                    # MongoDB regex: match date_str that starts with the date prefix
+                    # Escape special regex characters in the date prefix
+                    import re as re_module
+                    escaped_prefix = re_module.escape(date_prefix)
+                    date_query = {'$regex': f'^{escaped_prefix}'}
+                    print(f"🔍 Today filter: Using regex for date prefix '{date_prefix}' (matches any time on this date)")
+                    
+                    # Debug: Check a sample email to see date_str format
+                    sample = self.emails_collection.find_one(
+                        {"account_id": account_id},
+                        {"date_str": 1, "subject": 1, "date": 1}
+                    )
+                    if sample:
+                        print(f"🔍 Sample email date_str: '{sample.get('date_str')}', date: '{sample.get('date')}'")
+                        # Test if regex would match
+                        import re
+                        date_str = sample.get('date_str', '')
+                        if date_str:
+                            matches = bool(re.match(f'^{date_prefix}', date_str))
+                            print(f"🔍 Regex test: '{date_prefix}' matches '{date_str}'? {matches}")
+                
                 if date_query:
                     query['date_str'] = date_query
                     print(f"🔍 MongoDB date filter: {date_query}, account_id={account_id}")
@@ -493,6 +527,23 @@ class MongoDBManager:
             # Test query before skip/limit to see total matches
             test_count = self.emails_collection.count_documents(query)
             print(f"🔍 Query matches {test_count} emails (before skip/limit)")
+            
+            # Special debug for "today" queries
+            if date_from and date_to and date_from == date_to:
+                # Get all unique date_str values for this account to see what dates exist
+                all_dates = self.emails_collection.distinct("date_str", {"account_id": account_id})
+                if all_dates:
+                    # Extract just the date part (YYYY-MM-DD) from date_str values
+                    unique_dates = set()
+                    for dt in all_dates[:20]:  # Check first 20
+                        if dt and isinstance(dt, str) and len(dt) >= 10:
+                            unique_dates.add(dt[:10])  # Get YYYY-MM-DD part
+                    print(f"🔍 Available dates in DB (first 20): {sorted(list(unique_dates))}")
+                    print(f"🔍 Looking for date: '{date_from}'")
+                    if date_from in unique_dates:
+                        print(f"✅ Date '{date_from}' EXISTS in database!")
+                    else:
+                        print(f"❌ Date '{date_from}' NOT FOUND in database. Available dates: {sorted(list(unique_dates))}")
             
             emails = list(cursor.skip(skip).limit(limit))
             print(f"🔍 Query returned {len(emails)} emails (after skip={skip}, limit={limit})")
@@ -775,6 +826,155 @@ class MongoDBManager:
         except Exception as e:
             print(f"Error retrieving reply: {e}")
             return None
+    
+    def save_session(self, session_token: str, session_data: Dict) -> bool:
+        """Save session to MongoDB"""
+        try:
+            if self.db is None:
+                return False
+            
+            sessions_collection = self.db['sessions']
+            session_doc = {
+                'session_token': session_token,
+                'account_id': session_data.get('account_id'),
+                'email': session_data.get('email'),
+                'name': session_data.get('name', ''),
+                'expires_at': session_data.get('expires_at'),
+                'created_at': session_data.get('created_at', datetime.utcnow().isoformat()),
+                'last_accessed': datetime.utcnow().isoformat()
+            }
+            
+            # Add credentials if present (for OAuth sessions)
+            if 'credentials' in session_data:
+                session_doc['credentials'] = session_data['credentials']
+            
+            sessions_collection.update_one(
+                {'session_token': session_token},
+                {'$set': session_doc},
+                upsert=True
+            )
+            return True
+        except Exception as e:
+            print(f"Error saving session: {e}")
+            return False
+    
+    def get_session(self, session_token: str) -> Optional[Dict]:
+        """Get session from MongoDB"""
+        try:
+            if self.db is None:
+                return None
+            
+            sessions_collection = self.db['sessions']
+            session_doc = sessions_collection.find_one({'session_token': session_token})
+            
+            if session_doc:
+                # Remove MongoDB _id and return
+                session_doc.pop('_id', None)
+                # Check if expired
+                expires_at = session_doc.get('expires_at')
+                if expires_at:
+                    try:
+                        # Parse ISO format string
+                        if isinstance(expires_at, str):
+                            expires_dt = datetime.fromisoformat(expires_at.replace('Z', '+00:00'))
+                        else:
+                            expires_dt = expires_at
+                        if expires_dt < datetime.utcnow():
+                            # Session expired, delete it
+                            self.delete_session(session_token)
+                            return None
+                    except:
+                        pass
+                return session_doc
+            return None
+        except Exception as e:
+            print(f"Error getting session: {e}")
+            return None
+    
+    def delete_session(self, session_token: str) -> bool:
+        """Delete session from MongoDB"""
+        try:
+            if self.db is None:
+                return False
+            
+            sessions_collection = self.db['sessions']
+            result = sessions_collection.delete_one({'session_token': session_token})
+            return result.deleted_count > 0
+        except Exception as e:
+            print(f"Error deleting session: {e}")
+            return False
+    
+    def load_all_sessions(self) -> Dict[str, Dict]:
+        """Load all active sessions from MongoDB"""
+        try:
+            if self.db is None:
+                return {}
+            
+            sessions_collection = self.db['sessions']
+            now = datetime.utcnow()
+            
+            # Get all non-expired sessions
+            sessions = {}
+            for session_doc in sessions_collection.find({}):
+                session_token = session_doc.get('session_token')
+                if not session_token:
+                    continue
+                
+                # Check if expired
+                expires_at = session_doc.get('expires_at')
+                if expires_at:
+                    try:
+                        # Parse ISO format string
+                        if isinstance(expires_at, str):
+                            expires_dt = datetime.fromisoformat(expires_at.replace('Z', '+00:00'))
+                        else:
+                            expires_dt = expires_at
+                        if expires_dt < now:
+                            # Skip expired sessions
+                            continue
+                    except:
+                        # If we can't parse, skip it
+                        continue
+                
+                # Remove MongoDB _id and add to dict
+                session_doc.pop('_id', None)
+                sessions[session_token] = session_doc
+            
+            return sessions
+        except Exception as e:
+            print(f"Error loading sessions: {e}")
+            return {}
+    
+    def cleanup_expired_sessions(self):
+        """Remove expired sessions from MongoDB"""
+        try:
+            if self.db is None:
+                return
+            
+            sessions_collection = self.db['sessions']
+            now = datetime.utcnow().isoformat()
+            
+            # Delete sessions where expires_at < now
+            result = sessions_collection.delete_many({
+                'expires_at': {'$lt': now}
+            })
+            if result.deleted_count > 0:
+                print(f"✓ Cleaned up {result.deleted_count} expired sessions")
+        except Exception as e:
+            print(f"Error cleaning up sessions: {e}")
+    
+    def delete_account_sessions(self, account_id: int) -> int:
+        """Delete all sessions for a specific account"""
+        try:
+            if self.db is None:
+                return 0
+            
+            sessions_collection = self.db['sessions']
+            result = sessions_collection.delete_many({'account_id': account_id})
+            return result.deleted_count
+        except Exception as e:
+            print(f"Error deleting account sessions: {e}")
+            return 0
     
     def close(self):
         """Close MongoDB connection"""

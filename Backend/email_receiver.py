@@ -445,7 +445,7 @@ class EmailReceiver:
         return attachments
     
     def get_emails(self, folder: str = "INBOX", limit: int = 10, 
-                   unread_only: bool = False) -> List[Dict]:
+                   unread_only: bool = False, skip: int = 0) -> List[Dict]:
         """
         Retrieve emails from specified folder
         
@@ -453,6 +453,7 @@ class EmailReceiver:
             folder: Mailbox folder to read from
             limit: Maximum number of emails to retrieve
             unread_only: If True, only retrieve unread emails
+            skip: Number of emails to skip (for pagination/batching)
         
         Returns:
             List of email dictionaries
@@ -480,9 +481,16 @@ class EmailReceiver:
             if not email_ids:
                 return []
             
-            # Get the latest emails
-            latest_email_ids = email_ids[-limit:] if len(email_ids) > limit else email_ids
-            latest_email_ids = list(reversed(latest_email_ids))
+            # Reverse to get most recent first
+            email_ids = list(reversed(email_ids))
+            
+            # Apply skip and limit for pagination
+            total_available = len(email_ids)
+            if skip >= total_available:
+                return []  # Skip exceeds available emails
+            
+            end_index = skip + limit
+            latest_email_ids = email_ids[skip:end_index]
             
             emails = []
             
@@ -661,7 +669,7 @@ class EmailReceiver:
             print(f"Error extracting attachments: {str(e)}")
             return []
     
-    def search_emails(self, criteria: str, folder: str = "INBOX", limit: int = None) -> List[Dict]:
+    def search_emails(self, criteria: str, folder: str = "INBOX", limit: int = None, skip: int = 0) -> List[Dict]:
         """
         Search emails with custom criteria
         
@@ -669,6 +677,7 @@ class EmailReceiver:
             criteria: IMAP search criteria
             folder: Mailbox folder
             limit: Maximum number of emails to return
+            skip: Number of emails to skip (for pagination/batching)
         
         Examples:
             - 'FROM "sender@example.com"'
@@ -691,12 +700,19 @@ class EmailReceiver:
             
             email_ids = messages[0].split()
             
-            # Apply limit if specified
-            if limit and len(email_ids) > limit:
-                email_ids = email_ids[-limit:]
-            
             # Reverse to get most recent first
             email_ids = list(reversed(email_ids))
+            
+            # Apply skip and limit for pagination
+            total_available = len(email_ids)
+            if skip >= total_available:
+                return []  # Skip exceeds available emails
+            
+            if limit:
+                end_index = skip + limit
+                email_ids = email_ids[skip:end_index]
+            else:
+                email_ids = email_ids[skip:]
             
             emails = []
             

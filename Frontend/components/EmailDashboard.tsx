@@ -12,6 +12,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { format, subDays, startOfMonth, startOfYear } from 'date-fns';
+import AttachmentList from '@/components/AttachmentList';
+import AttachmentViewer from '@/components/AttachmentViewer';
 import {
   Mail,
   RefreshCw,
@@ -33,6 +35,8 @@ import {
   X as XIcon,
   Check,
   Trash2,
+  CheckCircle2,
+  Clock,
 } from 'lucide-react';
 import {
   Select,
@@ -46,7 +50,6 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import EmailChat from './EmailChat';
 import AccountManager from './AccountManager';
 import NotificationListener from './NotificationListener';
-import MongoDBViewer from './MongoDBViewer';
 import { FRONTEND_VERSION } from '@/lib/version';
 
 export default function EmailDashboard() {
@@ -58,6 +61,12 @@ export default function EmailDashboard() {
   const [healthStatus, setHealthStatus] = useState<{ status: string; email: string; ai_enabled: boolean; accounts_count?: number; version?: string } | null>(null);
   const [autoReplyEnabled, setAutoReplyEnabled] = useState<boolean>(false);
   const [customPrompt, setCustomPrompt] = useState<string>('');
+  const [viewingAttachment, setViewingAttachment] = useState<{
+    messageId: string;
+    savedFilename: string;
+    originalFilename: string;
+    contentType: string;
+  } | null>(null);
   const [customPromptValue, setCustomPromptValue] = useState<string>('');
   const [aiResponse, setAiResponse] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -72,6 +81,11 @@ export default function EmailDashboard() {
   const [loadingEmails, setLoadingEmails] = useState(false);
   const [deletingAccount, setDeletingAccount] = useState<boolean>(false);
   const [vectorCount, setVectorCount] = useState<number>(0);
+  const [emailFilter, setEmailFilter] = useState<'all' | 'auto-replied'>('all');
+  const [emailAnalysis, setEmailAnalysis] = useState<any>(null);
+  const [emailReply, setEmailReply] = useState<any>(null);
+  const [loadingEmailDetails, setLoadingEmailDetails] = useState(false);
+  const [emailDetailTab, setEmailDetailTab] = useState<'message' | 'analysis' | 'reply'>('message');
   const emailsPerPage = 20;
 
   // Load health status on mount
@@ -139,8 +153,35 @@ export default function EmailDashboard() {
     if (selectedEmail) {
       setReplyBody('');
       setAiResponse('');
+      setEmailAnalysis(null);
+      setEmailReply(null);
+      setEmailDetailTab('message'); // Reset to message tab when new email is selected
+      
+      // Load email details (AI analysis and reply) if message_id exists
+      const messageId = selectedEmail.message_id || selectedEmail.id;
+      if (messageId) {
+        loadEmailDetails(messageId);
+      }
     }
   }, [selectedEmail]);
+  
+  // Load email details (AI analysis and reply history)
+  const loadEmailDetails = async (messageId: string) => {
+    setLoadingEmailDetails(true);
+    try {
+      const response = await api.getEmailDetails(messageId);
+      if (response.success) {
+        setEmailAnalysis(response.analysis || null);
+        setEmailReply(response.reply || null);
+      }
+    } catch (error) {
+      console.error('Failed to load email details:', error);
+      setEmailAnalysis(null);
+      setEmailReply(null);
+    } finally {
+      setLoadingEmailDetails(false);
+    }
+  };
 
   const handleLogout = async () => {
     try {
@@ -346,6 +387,34 @@ export default function EmailDashboard() {
       
       // Show appropriate message based on results
       if (emailCount === 0) {
+        // Check if there are existing emails in MongoDB for this date range
+        try {
+          const { from, to } = getDateRange(dateFilter);
+          const mongoResponse = await api.getMongoDBEmailsCount(from, to, false);
+          
+          if (mongoResponse.success && mongoResponse.count > 0) {
+            // There are emails in MongoDB, just reload them
+            const dateRangeText = dateFilter === 'today' 
+              ? 'today' 
+              : dateFilter === 'last7' 
+                ? 'in the last 7 days'
+                : dateFilter === 'last30'
+                  ? 'in the last 30 days'
+                  : dateFilter === 'thisMonth'
+                    ? 'this month'
+                    : dateFilter === 'thisYear'
+                      ? 'this year'
+                      : 'in the selected date range';
+            
+            // Reload from MongoDB to show existing emails
+            await loadEmailsFromMongoDB();
+            return; // Don't show alert, just reload from MongoDB
+          }
+        } catch (mongoError) {
+          console.warn('Failed to check MongoDB for existing emails:', mongoError);
+        }
+        
+        // No emails found in email account AND no emails in MongoDB
         const dateRangeText = dateFilter === 'today' 
           ? 'today' 
           : dateFilter === 'last7' 
@@ -387,11 +456,22 @@ export default function EmailDashboard() {
       const { from, to } = getDateRange(dateFilter);
       const skip = (currentPage - 1) * emailsPerPage;
       
-      // Fetch emails first (required)
-      const emailsResponse = await api.getMongoDBEmails(emailsPerPage, skip, from, to, false);
+      console.log(`🔍 Loading emails from MongoDB: dateFilter=${dateFilter}, from=${from}, to=${to}, skip=${skip}, limit=${emailsPerPage}`);
+      
+      // Fetch emails first (required) - always show all emails
+      const emailsResponse = await api.getMongoDBEmails(emailsPerPage, skip, from, to, false, false);
+      
+      console.log(`📧 MongoDB response:`, {
+        success: emailsResponse.success,
+        emailsCount: emailsResponse.emails?.length || 0,
+        total: emailsResponse.total,
+        count: emailsResponse.count
+      });
       
       if (emailsResponse.success) {
-        setEmails(emailsResponse.emails || []);
+        const emailsArray = emailsResponse.emails || [];
+        console.log(`✅ Setting ${emailsArray.length} emails to state`);
+        setEmails(emailsArray);
         
         // Try to get accurate count from count API (optional - fallback to emails response total)
         let accurateTotal = emailsResponse.total || 0;
@@ -416,7 +496,12 @@ export default function EmailDashboard() {
         setHasMore(false);
       }
     } catch (error: any) {
-      console.error('Failed to load emails from MongoDB:', error);
+      console.error('❌ Failed to load emails from MongoDB:', error);
+      console.error('Error details:', {
+        message: error?.message,
+        stack: error?.stack,
+        response: error?.response
+      });
       setEmails([]);
       setTotalEmails(0);
       setHasMore(false);
@@ -667,12 +752,7 @@ export default function EmailDashboard() {
 
       {/* Main Content */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4 gap-1 sm:gap-0">
-          <TabsTrigger value="mongodb" className="flex items-center gap-1 sm:gap-2 text-xs sm:text-sm">
-            <Send className="w-3 h-3 sm:w-4 sm:h-4" />
-            <span className="hidden sm:inline">Auto Replies</span>
-            <span className="sm:hidden">Replies</span>
-          </TabsTrigger>
+        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 gap-1 sm:gap-0">
           <TabsTrigger value="inbox" className="flex items-center gap-1 sm:gap-2 text-xs sm:text-sm">
             <Inbox className="w-3 h-3 sm:w-4 sm:h-4" />
             Inbox
@@ -722,8 +802,18 @@ export default function EmailDashboard() {
                 </SelectContent>
               </Select>
 
+              <Button 
+                onClick={() => loadEmailsFromMongoDB()} 
+                disabled={loadingEmails}
+                variant="outline"
+                size="sm"
+              >
+                <RefreshCw className={`w-4 h-4 mr-2 ${loadingEmails ? 'animate-spin' : ''}`} />
+                Refresh
+              </Button>
+
               <Button onClick={() => loadEmails(false)} disabled={loading}>
-                <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+                <Mail className="w-4 h-4 mr-2" />
                 Load Emails
               </Button>
 
@@ -1011,130 +1101,321 @@ export default function EmailDashboard() {
                         </div>
                       </div>
 
-                      {selectedEmail.ai_analysis && (
-                        <Card className="bg-gradient-to-br from-primary/5 to-primary/10 border-primary/20">
-                          <CardHeader className="pb-3">
-                            <CardTitle className="text-base flex items-center gap-2">
-                              <Sparkles className="w-4 h-4 text-primary" />
-                              AI Analysis
-                            </CardTitle>
-                          </CardHeader>
-                          <CardContent className="space-y-3 text-sm">
-                            <div className="flex items-center gap-2">
-                              <span className="font-semibold text-muted-foreground">Category:</span>
-                              <Badge className={`${getCategoryColor(selectedEmail.ai_analysis.category)} text-xs`}>
-                                {selectedEmail.ai_analysis.category}
-                              </Badge>
-                            </div>
-                            {selectedEmail.ai_analysis.urgency_score > 6 && (
-                              <div className="flex items-center gap-2 p-2 rounded-md bg-orange-50 dark:bg-orange-950/30 border border-orange-200 dark:border-orange-800">
-                                <AlertCircle className="w-4 h-4 text-orange-600 dark:text-orange-400" />
-                                <span className="font-medium text-orange-700 dark:text-orange-300">
-                                  High Urgency ({selectedEmail.ai_analysis.urgency_score}/10)
-                                </span>
-                              </div>
-                            )}
-                            {selectedEmail.ai_analysis.summary && (
-                              <div className="pt-2 border-t">
-                                <span className="font-semibold text-muted-foreground block mb-1.5">Summary:</span>
-                                <p className="text-foreground leading-relaxed">{selectedEmail.ai_analysis.summary}</p>
-                              </div>
-                            )}
-                          </CardContent>
-                        </Card>
-                      )}
-
-                      {/* Email Body */}
-                      <div className="space-y-3">
-                        <h4 className="font-semibold text-base flex items-center gap-2">
-                          <MailOpen className="w-4 h-4" />
-                          Message
-                        </h4>
-                        <Card className="bg-muted/30">
-                          <CardContent className="pt-6">
-                            <div className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">
-                              {selectedEmail.text_body || (
-                                <span className="text-muted-foreground italic">No text content available</span>
-                              )}
-                            </div>
-                          </CardContent>
-                        </Card>
-                      </div>
-
-                      <Separator />
-
-                      {/* Reply Section */}
-                      <div className="space-y-4">
-                        <div className="flex items-center justify-between">
-                          <h4 className="font-semibold text-base flex items-center gap-2">
-                            <MessageSquare className="w-4 h-4" />
-                            Reply
-                          </h4>
-                          <Button
-                            onClick={handleGenerateAIResponse}
-                            disabled={loading}
-                            variant="outline"
-                            size="sm"
-                            className="gap-2"
-                          >
+                      {/* Tabs for Message, AI Analysis, and Reply */}
+                      <Tabs value={emailDetailTab} onValueChange={(v) => setEmailDetailTab(v as 'message' | 'analysis' | 'reply')} className="mt-4">
+                        <TabsList className="grid w-full grid-cols-3">
+                          <TabsTrigger value="message" className="flex items-center gap-2">
+                            <MailOpen className="w-4 h-4" />
+                            <span className="hidden sm:inline">Message</span>
+                          </TabsTrigger>
+                          <TabsTrigger value="analysis" className="flex items-center gap-2">
                             <Sparkles className="w-4 h-4" />
-                            Generate AI Response
-                          </Button>
-                        </div>
+                            <span className="hidden sm:inline">AI Analysis</span>
+                            {loadingEmailDetails && (
+                              <RefreshCw className="w-3 h-3 animate-spin" />
+                            )}
+                          </TabsTrigger>
+                          <TabsTrigger value="reply" className="flex items-center gap-2">
+                            <MessageSquare className="w-4 h-4" />
+                            <span className="hidden sm:inline">Reply</span>
+                            {emailReply && (
+                              <CheckCircle2 className="w-3 h-3 text-green-600" />
+                            )}
+                          </TabsTrigger>
+                        </TabsList>
 
-                        {aiResponse && (
-                          <Card className="bg-gradient-to-br from-green-50 to-emerald-50 dark:from-green-950/30 dark:to-emerald-950/30 border-green-200 dark:border-green-800">
-                            <CardHeader className="pb-3">
-                              <CardTitle className="text-sm flex items-center gap-2 text-green-700 dark:text-green-300">
-                                <Sparkles className="w-4 h-4" />
-                                AI Generated Response
-                              </CardTitle>
-                            </CardHeader>
-                            <CardContent>
-                              <div className="whitespace-pre-wrap text-sm leading-relaxed text-green-900 dark:text-green-100">
-                                {aiResponse}
-                              </div>
+                        {/* Message Tab */}
+                        <TabsContent value="message" className="space-y-4 mt-4">
+                          <div className="space-y-3">
+                            <h4 className="font-semibold text-base flex items-center gap-2">
+                              <MailOpen className="w-4 h-4" />
+                              Message Content
+                            </h4>
+                            <Card className="bg-muted/30">
+                              <CardContent className="pt-6">
+                                <div className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">
+                                  {selectedEmail.text_body || (
+                                    <span className="text-muted-foreground italic">No text content available</span>
+                                  )}
+                                </div>
+                              </CardContent>
+                            </Card>
+                          </div>
+
+                          {/* Attachments */}
+                          {selectedEmail.message_id && (
+                            <div className="space-y-3">
+                              <h4 className="font-semibold text-base flex items-center gap-2">
+                                <FileText className="w-4 h-4" />
+                                Attachments
+                              </h4>
+                              <AttachmentList 
+                                messageId={selectedEmail.message_id} 
+                                compact={false}
+                              />
+                            </div>
+                          )}
+                        </TabsContent>
+
+                        {/* AI Analysis Tab */}
+                        <TabsContent value="analysis" className="space-y-4 mt-4">
+                          {loadingEmailDetails ? (
+                            <Card className="bg-gradient-to-br from-blue-50 to-purple-50 dark:from-blue-950/30 dark:to-purple-950/30 border-blue-200 dark:border-blue-800">
+                              <CardContent className="pt-6">
+                                <div className="flex items-center justify-center py-8">
+                                  <RefreshCw className="w-5 h-5 animate-spin text-blue-600 dark:text-blue-400 mr-3" />
+                                  <span className="text-sm text-blue-700 dark:text-blue-300">Loading analysis...</span>
+                                </div>
+                              </CardContent>
+                            </Card>
+                          ) : emailAnalysis ? (
+                            <Card className="bg-gradient-to-br from-blue-50 via-purple-50 to-indigo-50 dark:from-blue-950/40 dark:via-purple-950/40 dark:to-indigo-950/40 border-blue-200 dark:border-blue-800">
+                              <CardHeader className="pb-3">
+                                <CardTitle className="text-base flex items-center gap-2 text-blue-700 dark:text-blue-300">
+                                  <Sparkles className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                                  AI Analysis
+                                </CardTitle>
+                              </CardHeader>
+                              <CardContent className="space-y-4 text-sm">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-semibold text-muted-foreground">Category:</span>
+                                  <Badge className={`${getCategoryColor(emailAnalysis.category)} text-xs`}>
+                                    {emailAnalysis.category}
+                                  </Badge>
+                                </div>
+                                
+                                {emailAnalysis.urgency_score !== undefined && (
+                                  <div className={`flex items-center gap-2 p-3 rounded-md ${
+                                    emailAnalysis.urgency_score > 6 
+                                      ? 'bg-orange-50 dark:bg-orange-950/30 border border-orange-200 dark:border-orange-800' 
+                                      : 'bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800'
+                                  }`}>
+                                    <AlertCircle className={`w-4 h-4 ${
+                                      emailAnalysis.urgency_score > 6 
+                                        ? 'text-orange-600 dark:text-orange-400' 
+                                        : 'text-blue-600 dark:text-blue-400'
+                                    }`} />
+                                    <span className={`font-medium ${
+                                      emailAnalysis.urgency_score > 6 
+                                        ? 'text-orange-700 dark:text-orange-300' 
+                                        : 'text-blue-700 dark:text-blue-300'
+                                    }`}>
+                                      Urgency Score: {emailAnalysis.urgency_score}/10
+                                      {emailAnalysis.urgency_score > 6 && ' (High Urgency)'}
+                                    </span>
+                                  </div>
+                                )}
+
+                                {emailAnalysis.sentiment && (
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-semibold text-muted-foreground">Sentiment:</span>
+                                    <Badge variant="outline" className="text-xs">
+                                      {emailAnalysis.sentiment}
+                                    </Badge>
+                                  </div>
+                                )}
+
+                                {emailAnalysis.is_spam !== undefined && (
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-semibold text-muted-foreground">Spam:</span>
+                                    <Badge variant={emailAnalysis.is_spam ? "destructive" : "outline"} className="text-xs">
+                                      {emailAnalysis.is_spam ? "Yes" : "No"}
+                                    </Badge>
+                                  </div>
+                                )}
+
+                                {emailAnalysis.summary && (
+                                  <div className="pt-3 border-t">
+                                    <span className="font-semibold text-muted-foreground block mb-2">Summary:</span>
+                                    <p className="text-foreground leading-relaxed">{emailAnalysis.summary}</p>
+                                  </div>
+                                )}
+
+                                {emailAnalysis.key_points && emailAnalysis.key_points.length > 0 && (
+                                  <div className="pt-3 border-t">
+                                    <span className="font-semibold text-muted-foreground block mb-2">Key Points:</span>
+                                    <ul className="list-disc list-inside space-y-1.5">
+                                      {emailAnalysis.key_points.map((point: string, idx: number) => (
+                                        <li key={idx} className="text-foreground">{point}</li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )}
+
+                                {emailAnalysis.tags && emailAnalysis.tags.length > 0 && (
+                                  <div className="pt-3 border-t">
+                                    <span className="font-semibold text-muted-foreground block mb-2">Tags:</span>
+                                    <div className="flex flex-wrap gap-2">
+                                      {emailAnalysis.tags.map((tag: string, idx: number) => (
+                                        <Badge key={idx} variant="secondary" className="text-xs">
+                                          {tag}
+                                        </Badge>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {emailAnalysis.action_required !== undefined && (
+                                  <div className="pt-3 border-t">
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-semibold text-muted-foreground">Action Required:</span>
+                                      <Badge variant={emailAnalysis.action_required ? "default" : "outline"} className="text-xs">
+                                        {emailAnalysis.action_required ? "Yes" : "No"}
+                                      </Badge>
+                                    </div>
+                                  </div>
+                                )}
+
+                                {emailAnalysis.suggested_response && (
+                                  <div className="pt-3 border-t">
+                                    <span className="font-semibold text-muted-foreground block mb-2">Suggested Response:</span>
+                                    <div className="whitespace-pre-wrap text-foreground leading-relaxed bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 p-3 rounded-md">
+                                      {emailAnalysis.suggested_response}
+                                    </div>
+                                  </div>
+                                )}
+                              </CardContent>
+                            </Card>
+                          ) : (
+                            <Card className="bg-gradient-to-br from-blue-50 to-purple-50 dark:from-blue-950/30 dark:to-purple-950/30 border-blue-200 dark:border-blue-800">
+                              <CardContent className="pt-6">
+                                <div className="text-center py-8">
+                                  <Sparkles className="w-12 h-12 mx-auto mb-4 text-blue-500 dark:text-blue-400 opacity-70" />
+                                  <p className="text-blue-700 dark:text-blue-300">No AI analysis available for this email</p>
+                                </div>
+                              </CardContent>
+                            </Card>
+                          )}
+                        </TabsContent>
+
+                        {/* Reply Tab */}
+                        <TabsContent value="reply" className="space-y-4 mt-4">
+                          {/* Auto-Reply History */}
+                          {emailReply ? (
+                            <Card className="bg-gradient-to-br from-green-50 to-emerald-50 dark:from-green-950/30 dark:to-emerald-950/30 border-green-200 dark:border-green-800">
+                              <CardHeader className="pb-3">
+                                <CardTitle className="text-sm flex items-center gap-2 text-green-700 dark:text-green-300">
+                                  <CheckCircle2 className="w-4 h-4" />
+                                  Auto-Reply Sent
+                                  {emailReply.success && (
+                                    <Badge variant="outline" className="ml-2 bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 border-green-300 dark:border-green-700">
+                                      Success
+                                    </Badge>
+                                  )}
+                                </CardTitle>
+                              </CardHeader>
+                              <CardContent className="space-y-3 text-sm">
+                                <div className="flex items-center gap-2 text-muted-foreground">
+                                  <Clock className="w-4 h-4" />
+                                  <span>Sent: {new Date(emailReply.sent_at).toLocaleString()}</span>
+                                </div>
+                                {emailReply.to && (
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-semibold text-muted-foreground">To:</span>
+                                    <span className="text-foreground">{emailReply.to}</span>
+                                  </div>
+                                )}
+                                {emailReply.subject && (
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-semibold text-muted-foreground">Subject:</span>
+                                    <span className="text-foreground">{emailReply.subject}</span>
+                                  </div>
+                                )}
+                                <div className="pt-2 border-t">
+                                  <span className="font-semibold text-muted-foreground block mb-2">Reply Body:</span>
+                                  <div className="whitespace-pre-wrap text-foreground leading-relaxed bg-background p-3 rounded-md border">
+                                    {emailReply.body}
+                                  </div>
+                                </div>
+                              </CardContent>
+                            </Card>
+                          ) : (
+                            <Card className="bg-muted/30">
+                              <CardContent className="pt-6">
+                                <div className="text-center py-4">
+                                  <MessageSquare className="w-12 h-12 mx-auto mb-4 text-muted-foreground opacity-50" />
+                                  <p className="text-muted-foreground mb-4">No auto-reply sent for this email</p>
+                                </div>
+                              </CardContent>
+                            </Card>
+                          )}
+
+                          <Separator />
+
+                          {/* Manual Reply Section */}
+                          <div className="space-y-4">
+                            <div className="flex items-center justify-between">
+                              <h4 className="font-semibold text-base flex items-center gap-2">
+                                <Send className="w-4 h-4" />
+                                Send Reply
+                              </h4>
                               <Button
-                                variant="ghost"
+                                onClick={handleGenerateAIResponse}
+                                disabled={loading}
+                                variant="outline"
                                 size="sm"
-                                className="mt-3 text-xs"
-                                onClick={() => setReplyBody(aiResponse)}
+                                className="gap-2"
                               >
-                                Use this response
+                                <Sparkles className="w-4 h-4" />
+                                Generate AI Response
                               </Button>
-                            </CardContent>
-                          </Card>
-                        )}
+                            </div>
 
-                        <div className="space-y-3">
-                          <label className="text-sm font-semibold block">Your Reply:</label>
-                          <Textarea
-                            placeholder="Type your reply here..."
-                            value={replyBody}
-                            onChange={(e) => setReplyBody(e.target.value)}
-                            rows={8}
-                            className="resize-none font-mono text-sm"
-                          />
-                          <button
-                            onClick={handleSendReply}
-                            disabled={loading || !replyBody.trim()}
-                            className="w-full h-10 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 text-sm font-medium transition-all disabled:pointer-events-none disabled:opacity-50"
-                            style={{ 
-                              display: 'flex', 
-                              alignItems: 'center', 
-                              justifyContent: 'center',
-                              gap: '0.5rem',
-                              paddingLeft: '1rem',
-                              paddingRight: '1rem',
-                              width: '100%',
-                              textAlign: 'center'
-                            }}
-                          >
-                            <Send className="w-4 h-4" style={{ flexShrink: 0, margin: 0 }} />
-                            <span style={{ whiteSpace: 'nowrap', margin: 0, padding: 0 }}>Send Reply</span>
-                          </button>
-                        </div>
-                      </div>
+                            {aiResponse && (
+                              <Card className="bg-gradient-to-br from-green-50 to-emerald-50 dark:from-green-950/30 dark:to-emerald-950/30 border-green-200 dark:border-green-800">
+                                <CardHeader className="pb-3">
+                                  <CardTitle className="text-sm flex items-center gap-2 text-green-700 dark:text-green-300">
+                                    <Sparkles className="w-4 h-4" />
+                                    AI Generated Response
+                                  </CardTitle>
+                                </CardHeader>
+                                <CardContent>
+                                  <div className="whitespace-pre-wrap text-sm leading-relaxed text-green-900 dark:text-green-100">
+                                    {aiResponse}
+                                  </div>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="mt-3 text-xs"
+                                    onClick={() => setReplyBody(aiResponse)}
+                                  >
+                                    Use this response
+                                  </Button>
+                                </CardContent>
+                              </Card>
+                            )}
+
+                            <div className="space-y-3">
+                              <label className="text-sm font-semibold block">Your Reply:</label>
+                              <Textarea
+                                placeholder="Type your reply here..."
+                                value={replyBody}
+                                onChange={(e) => setReplyBody(e.target.value)}
+                                rows={8}
+                                className="resize-none font-mono text-sm"
+                              />
+                              <button
+                                onClick={handleSendReply}
+                                disabled={loading || !replyBody.trim()}
+                                className="w-full h-10 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 text-sm font-medium transition-all disabled:pointer-events-none disabled:opacity-50"
+                                style={{ 
+                                  display: 'flex', 
+                                  alignItems: 'center', 
+                                  justifyContent: 'center',
+                                  gap: '0.5rem',
+                                  paddingLeft: '1rem',
+                                  paddingRight: '1rem',
+                                  width: '100%',
+                                  textAlign: 'center'
+                                }}
+                              >
+                                <Send className="w-4 h-4" style={{ flexShrink: 0, margin: 0 }} />
+                                <span style={{ whiteSpace: 'nowrap', margin: 0, padding: 0 }}>Send Reply</span>
+                              </button>
+                            </div>
+                          </div>
+                        </TabsContent>
+                      </Tabs>
                     </div>
                   </ScrollArea>
                 ) : (
@@ -1244,13 +1525,19 @@ You are a friendly customer service representative. Always be polite, concise, a
             </CardContent>
           </Card>
         </TabsContent>
-
-        {/* Auto Replies Tab */}
-        <TabsContent value="mongodb">
-          <MongoDBViewer />
-        </TabsContent>
       </Tabs>
       </div>
+
+      {/* Attachment Viewer Modal */}
+      {viewingAttachment && (
+        <AttachmentViewer
+          messageId={viewingAttachment.messageId}
+          savedFilename={viewingAttachment.savedFilename}
+          originalFilename={viewingAttachment.originalFilename}
+          contentType={viewingAttachment.contentType}
+          onClose={() => setViewingAttachment(null)}
+        />
+      )}
     </>
   );
 }

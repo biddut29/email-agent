@@ -252,25 +252,119 @@ class EmailVectorStore:
                 metadatas.append(metadata)
             
             # Add to collection (ChromaDB handles embeddings automatically)
-            self.collection.add(
-                ids=ids,
-                documents=documents,
-                metadatas=metadatas
-            )
-            
-            if skipped_count > 0:
-                print(f"✓ Added {len(ids)} incoming emails to vector store (skipped {skipped_count} sent emails)")
-            
-            return {
-                "success": True,
-                "added": len(ids),
-                "skipped": skipped_count,
-                "total": self.collection.count()
-            }
+            # ChromaDB will skip duplicates (same ID), so we need to check what actually gets added
+            try:
+                print(f"📤 Adding {len(ids)} emails to vector store (account_id: {self.current_account_id})...")
+                self.collection.add(
+                    ids=ids,
+                    documents=documents,
+                    metadatas=metadatas
+                )
+                
+                # Verify how many were actually added (ChromaDB may skip duplicates)
+                after_count = self.collection.count()
+                print(f"✅ Vector store add completed. Total emails in store: {after_count}")
+                
+                if skipped_count > 0:
+                    print(f"✓ Added {len(ids)} incoming emails to vector store (skipped {skipped_count} sent emails)")
+                else:
+                    print(f"✓ Added {len(ids)} incoming emails to vector store")
+                
+                return {
+                    "success": True,
+                    "added": len(ids),
+                    "skipped": skipped_count,
+                    "total": after_count
+                }
+            except Exception as add_error:
+                print(f"❌ Error adding emails to ChromaDB: {add_error}")
+                import traceback
+                traceback.print_exc()
+                # Try to add in smaller batches if there's an error
+                if len(ids) > 100:
+                    print(f"⚠️ Attempting to add in smaller batches...")
+                    batch_size = 50
+                    added_count = 0
+                    for i in range(0, len(ids), batch_size):
+                        batch_ids = ids[i:i+batch_size]
+                        batch_docs = documents[i:i+batch_size]
+                        batch_meta = metadatas[i:i+batch_size]
+                        try:
+                            self.collection.add(
+                                ids=batch_ids,
+                                documents=batch_docs,
+                                metadatas=batch_meta
+                            )
+                            added_count += len(batch_ids)
+                            print(f"✓ Added batch {i//batch_size + 1}: {len(batch_ids)} emails")
+                        except Exception as batch_error:
+                            print(f"❌ Error adding batch {i//batch_size + 1}: {batch_error}")
+                    
+                    return {
+                        "success": True,
+                        "added": added_count,
+                        "skipped": skipped_count,
+                        "total": self.collection.count()
+                    }
+                else:
+                    raise
         
         except Exception as e:
             print(f"Error adding emails to vector store: {e}")
             return {"error": str(e)}
+    
+    def update_account_id(self, old_account_id: str, new_account_id: str, email_ids: List[str]) -> Dict:
+        """
+        Update account_id for existing emails by deleting and re-adding them.
+        This is needed because ChromaDB doesn't support updating metadata for existing embeddings.
+        
+        Args:
+            old_account_id: Current account_id in metadata
+            new_account_id: New account_id to set
+            email_ids: List of email IDs to update
+        
+        Returns:
+            Dict with success status and count
+        """
+        if not self.collection or not email_ids:
+            return {"success": False, "error": "Collection not initialized or no emails to update"}
+        
+        try:
+            # Get existing emails with their data
+            results = self.collection.get(
+                ids=email_ids,
+                include=['documents', 'metadatas']
+            )
+            
+            if not results.get('ids'):
+                return {"success": False, "error": "No emails found with those IDs"}
+            
+            # Delete old entries
+            self.collection.delete(ids=email_ids)
+            
+            # Update metadata with new account_id
+            updated_metadatas = []
+            for meta in results.get('metadatas', []):
+                updated_meta = meta.copy()
+                updated_meta['account_id'] = new_account_id
+                updated_metadatas.append(updated_meta)
+            
+            # Re-add with updated metadata
+            self.collection.add(
+                ids=results['ids'],
+                documents=results['documents'],
+                metadatas=updated_metadatas
+            )
+            
+            return {
+                "success": True,
+                "updated": len(results['ids'])
+            }
+        except Exception as e:
+            print(f"Error updating account_id: {e}")
+            import traceback
+            traceback.print_exc()
+            return {"success": False, "error": str(e)}
     
     def semantic_search(self, query: str, n_results: int = 10, 
                        filter_metadata: Optional[Dict] = None) -> Dict:
@@ -293,9 +387,14 @@ class EmailVectorStore:
             if filter_metadata is None:
                 filter_metadata = {}
             
-            # Add current account filter if set
+            # Security: Always filter by account_id to prevent cross-account data access
+            # If current_account_id is not set, this is a security issue
             if self.current_account_id is not None:
                 filter_metadata['account_id'] = str(self.current_account_id)
+            else:
+                # Security: If account_id is not set, return error to prevent data leakage
+                print("⚠️ Security: semantic_search called without account_id set - returning empty results")
+                return {"success": False, "error": "Account not set", "results": []}
             
             # Query the collection
             results = self.collection.query(
@@ -304,18 +403,33 @@ class EmailVectorStore:
                 where=filter_metadata if filter_metadata else None
             )
             
-            # Format results
+            # Format results and filter by relevance
             formatted_results = []
             
             if results['ids'] and results['ids'][0]:
                 for i, email_id in enumerate(results['ids'][0]):
+                    distance = results['distances'][0][i] if results.get('distances') else None
+                    # ChromaDB uses cosine distance: 0 = identical, 1 = completely different
+                    # Convert to similarity score: 1 - distance (higher = more similar)
+                    similarity = 1 - distance if distance is not None else 0
+                    
                     result = {
                         "id": email_id,
-                        "distance": results['distances'][0][i] if results.get('distances') else None,
+                        "distance": distance,
+                        "similarity": similarity,
                         "metadata": results['metadatas'][0][i] if results.get('metadatas') else {},
                         "document": results['documents'][0][i] if results.get('documents') else ""
                     }
                     formatted_results.append(result)
+                
+                # Sort by similarity (highest first)
+                formatted_results.sort(key=lambda x: x.get('similarity', 0), reverse=True)
+                
+                # Log top results for debugging
+                if formatted_results:
+                    top_3 = formatted_results[:3]
+                    similarity_scores = [f"{r.get('similarity', 0):.3f}" for r in top_3]
+                    print(f"📊 Top 3 results - Similarity scores: {similarity_scores}")
             
             return {
                 "success": True,
@@ -376,9 +490,9 @@ class EmailVectorStore:
             print(f"Error finding similar emails: {e}")
             return {"error": str(e)}
     
-    def get_relevant_emails_for_chat(self, query: str, n_results: int = 5) -> List[Dict]:
+    def get_relevant_emails_for_chat(self, query: str, n_results: int = 10) -> List[Dict]:
         """
-        Get most relevant emails for chat context
+        Get most relevant emails for chat context with query expansion for better matching
         
         Args:
             query: Chat query
@@ -390,16 +504,140 @@ class EmailVectorStore:
         if not self.collection:
             return []
         
+        # Security: Ensure account_id is set to prevent cross-account data access
+        if self.current_account_id is None:
+            print("⚠️ Security: get_relevant_emails_for_chat called without account_id set - returning empty results")
+            return []
+        
         try:
-            results = self.semantic_search(query, n_results=n_results)
+            # Expand query with synonyms for better matching
+            query_variations = [query]
+            query_lower = query.lower()
             
-            if results.get('success'):
-                return results.get('results', [])
+            # If query is about "leave", make it more specific
+            if 'leave' in query_lower and 'related' in query_lower:
+                # Make query more specific for leave-related searches
+                query = "leave request vacation time off PTO holiday absence"
+                query_variations = [query, "leave request", "vacation request", "time off request", "PTO request", "holiday request"]
+                print(f"🔍 Enhanced query for leave search: '{query}'")
+            elif 'leave' in query_lower:
+                query_variations = [query, "leave request", "vacation", "time off", "PTO", "holiday", "absence", "sick leave"]
+            if 'email' in query_lower or 'mail' in query_lower:
+                query_variations.extend(['message', 'correspondence'])
+            if 'meeting' in query_lower:
+                query_variations.extend(['appointment', 'call', 'conference'])
+            if 'urgent' in query_lower or 'important' in query_lower:
+                query_variations.extend(['priority', 'critical', 'asap'])
+            
+            # Try original query first
+            results = self.semantic_search(query, n_results=n_results)
+            found_results = []
+            
+            if results.get('success') and results.get('results'):
+                found_results = results.get('results', [])
+                
+                # Security: Verify all results belong to the correct account
+                expected_account_id = str(self.current_account_id)
+                verified_results = []
+                for r in found_results:
+                    meta = r.get('metadata', {})
+                    result_account_id = meta.get('account_id', '')
+                    if result_account_id == expected_account_id:
+                        verified_results.append(r)
+                    else:
+                        print(f"⚠️ Security: Filtered out result from wrong account (expected: {expected_account_id}, got: {result_account_id})")
+                found_results = verified_results
+                print(f"🔍 Vector search for '{query}': Found {len(found_results)} results for account {self.current_account_id}")
+                
+                # Filter by relevance threshold (similarity > 0.5 means more relevant)
+                # ChromaDB cosine distance: 0 = identical, 1 = completely different
+                # Similarity = 1 - distance, so similarity > 0.5 means distance < 0.5
+                # Also verify emails actually contain relevant keywords
+                relevant_results = []
+                leave_keywords = ['leave', 'vacation', 'pto', 'holiday', 'absence', 'time off', 'sick leave', 'annual leave', 'personal leave']
+                
+                for r in found_results:
+                    similarity = r.get('similarity', 0)
+                    # Higher threshold for better quality (0.5 instead of 0.3)
+                    if similarity > 0.5:
+                        # If query is about leave, verify email contains leave-related keywords
+                        if 'leave' in query_lower:
+                            document = r.get('document', '').lower()
+                            subject = r.get('metadata', {}).get('subject', '').lower()
+                            email_text = f"{subject} {document}"
+                            
+                            # Check if email contains any leave-related keywords
+                            contains_keywords = any(keyword in email_text for keyword in leave_keywords)
+                            
+                            if contains_keywords:
+                                relevant_results.append(r)
+                            else:
+                                print(f"⚠️ Skipped email (similarity: {similarity:.3f}) - no leave keywords found in subject/body")
+                        else:
+                            # For non-leave queries, just use similarity threshold
+                            relevant_results.append(r)
+                
+                # If we have good results, return them
+                if len(relevant_results) >= 3:
+                    print(f"✅ Filtered to {len(relevant_results)} relevant results (similarity > 0.5, keyword verified)")
+                    return relevant_results[:n_results]
+                
+                # If few or no relevant results, try query expansion
+                if len(relevant_results) < 3:
+                    print(f"⚠️ Only {len(relevant_results)} results above relevance threshold. Trying query expansion...")
+                    for expanded_query in query_variations[1:]:  # Skip first (original)
+                        if expanded_query.lower() != query.lower():
+                            expanded_results = self.semantic_search(expanded_query, n_results=5)
+                            if expanded_results.get('success') and expanded_results.get('results'):
+                                # Security: Verify expanded results belong to correct account
+                                expected_account_id = str(self.current_account_id)
+                                verified_expanded = []
+                                for r in expanded_results.get('results', []):
+                                    meta = r.get('metadata', {})
+                                    if meta.get('account_id', '') == expected_account_id:
+                                        verified_expanded.append(r)
+                                
+                                # Merge results, avoiding duplicates, and filter by relevance
+                                existing_ids = {r.get('id') for r in relevant_results}
+                                for new_result in verified_expanded:
+                                    similarity = new_result.get('similarity', 0)
+                                    if new_result.get('id') not in existing_ids and similarity > 0.5:
+                                        # If query is about leave, verify keywords
+                                        if 'leave' in query_lower:
+                                            document = new_result.get('document', '').lower()
+                                            subject = new_result.get('metadata', {}).get('subject', '').lower()
+                                            email_text = f"{subject} {document}"
+                                            if any(keyword in email_text for keyword in leave_keywords):
+                                                relevant_results.append(new_result)
+                                        else:
+                                            relevant_results.append(new_result)
+                                        if len(relevant_results) >= n_results:
+                                            break
+                                if len(relevant_results) >= n_results:
+                                    break
+                    
+                    if relevant_results:
+                        print(f"✅ After query expansion: Found {len(relevant_results)} relevant results")
+                        return relevant_results[:n_results]
+                
+                # If still no good results, return top 3 anyway (might still be useful)
+                if found_results:
+                    # Final security check: ensure all results belong to correct account
+                    expected_account_id = str(self.current_account_id)
+                    final_verified = [r for r in found_results[:3] if r.get('metadata', {}).get('account_id', '') == expected_account_id]
+                    if final_verified:
+                        low_relevance_scores = [f"{r.get('similarity', 0):.3f}" for r in final_verified]
+                        print(f"📋 Returning top {len(final_verified)} results anyway (low relevance): {low_relevance_scores}")
+                        return final_verified
+            else:
+                print(f"⚠️ Vector search for '{query}': No results found")
             
             return []
         
         except Exception as e:
-            print(f"Error getting relevant emails: {e}")
+            print(f"❌ Error getting relevant emails: {e}")
+            import traceback
+            traceback.print_exc()
             return []
     
     def get_stats(self) -> Dict:

@@ -384,6 +384,7 @@ class GmailAPIClient:
                         attachments.append({
                             'filename': part['filename'],
                             'mime_type': part.get('mimeType', ''),
+                            'content_type': part.get('mimeType', 'application/octet-stream'),  # Add content_type for consistency
                             'size': part['body'].get('size', 0),
                             'attachment_id': part['body'].get('attachmentId')
                         })
@@ -476,4 +477,89 @@ class GmailAPIClient:
         except Exception as e:
             print(f"Error stopping watch: {e}")
             return False
+    
+    def get_attachment(self, message_id: str, filename: str) -> Optional[Dict]:
+        """
+        Get attachment content from Gmail API
+        
+        Args:
+            message_id: The Gmail message ID (can be gmail_id or RFC822 message_id)
+            filename: Name of the attachment to extract
+            
+        Returns:
+            Dictionary with filename, content_type, and data (base64 encoded)
+        """
+        if not self.service:
+            return None
+        
+        try:
+            import base64
+            
+            # Message ID might be RFC822 format <...@mail.gmail.com>, extract gmail_id
+            gmail_id = message_id
+            if message_id.startswith('<') and '@mail.gmail.com>' in message_id:
+                # Extract gmail ID from RFC822 message ID
+                gmail_id = message_id.strip('<>').split('@')[0]
+            
+            # Get the full message to find attachment_id
+            message = self.service.users().messages().get(
+                userId='me',
+                id=gmail_id,
+                format='full'
+            ).execute()
+            
+            # Find the attachment in the message parts
+            payload = message.get('payload', {})
+            
+            def find_attachment_in_parts(parts, target_filename):
+                """Recursively search for attachment in parts"""
+                if not parts:
+                    return None
+                
+                for part in parts:
+                    # Check if this part is the attachment we're looking for
+                    if part.get('filename') == target_filename:
+                        attachment_id = part['body'].get('attachmentId')
+                        if attachment_id:
+                            return {
+                                'attachment_id': attachment_id,
+                                'mime_type': part.get('mimeType', 'application/octet-stream')
+                            }
+                    
+                    # Recursively check nested parts
+                    if 'parts' in part:
+                        result = find_attachment_in_parts(part['parts'], target_filename)
+                        if result:
+                            return result
+                
+                return None
+            
+            # Search for attachment
+            attachment_info = None
+            if 'parts' in payload:
+                attachment_info = find_attachment_in_parts(payload['parts'], filename)
+            
+            if not attachment_info:
+                print(f"⚠️  Attachment '{filename}' not found in message {gmail_id}")
+                return None
+            
+            # Download attachment using attachment_id
+            attachment = self.service.users().messages().attachments().get(
+                userId='me',
+                messageId=gmail_id,
+                id=attachment_info['attachment_id']
+            ).execute()
+            
+            # Return in same format as IMAP get_attachment
+            return {
+                'filename': filename,
+                'content_type': attachment_info['mime_type'],
+                'data': attachment['data']  # Already base64 encoded by Gmail API
+            }
+        
+        except Exception as e:
+            print(f"❌ Error getting Gmail attachment '{filename}': {e}")
+            import traceback
+            traceback.print_exc()
+            return None
 

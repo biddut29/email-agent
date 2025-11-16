@@ -8,6 +8,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Database, RefreshCw, ChevronLeft, ChevronRight, Mail, Calendar, Brain, Sparkles, AlertTriangle, CheckCircle2, Clock, Send } from 'lucide-react';
 import { Textarea } from '@/components/ui/textarea';
+import AttachmentList from '@/components/AttachmentList';
 import api from '@/lib/api';
 import type { Email } from '@/lib/api';
 
@@ -631,27 +632,12 @@ export default function MongoDBViewer() {
                         </div>
                       </div>
                       
-                      {selectedEmail.has_attachments && selectedEmail.attachments && (
+                      {selectedEmail.has_attachments && selectedEmail.message_id && (
                         <div>
-                          <label className="text-sm font-semibold text-muted-foreground">Attachments ({selectedEmail.attachments.length})</label>
-                          <div className="mt-2 space-y-2">
-                            {selectedEmail.attachments.map((att, i) => (
-                              <div key={i} className="flex items-center gap-2 p-3 bg-muted rounded-md border">
-                                <span className="text-xl">📎</span>
-                                <div className="flex-1">
-                                  <p className="text-sm font-medium">{att.filename || 'Unknown'}</p>
-                                  {att.content_type && (
-                                    <p className="text-xs text-muted-foreground">{att.content_type}</p>
-                                  )}
-                                </div>
-                                {att.size && (
-                                  <Badge variant="outline" className="text-xs">
-                                    {att.size}
-                                  </Badge>
-                                )}
-                              </div>
-                            ))}
-                          </div>
+                          <AttachmentList 
+                            messageId={selectedEmail.message_id} 
+                            compact={false}
+                          />
                         </div>
                       )}
                     </div>

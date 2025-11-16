@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -41,21 +42,13 @@ export default function AccountManager({ onAccountChange }: AccountManagerProps)
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
 
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-
   useEffect(() => {
     loadAccounts();
   }, []);
 
   const loadAccounts = async () => {
     try {
-      const response = await fetch(`${apiUrl}/api/accounts`);
-      
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-      
-      const data = await response.json();
+      const data = await api.getAccounts();
       console.log('Accounts API response:', data);
       
       if (data.success) {
@@ -81,10 +74,6 @@ export default function AccountManager({ onAccountChange }: AccountManagerProps)
       }
     } catch (error: any) {
       console.error('Failed to load accounts:', error);
-      // Check if it's a network error
-      if (error instanceof TypeError && error.message === 'Failed to fetch') {
-        console.error(`Cannot connect to backend at ${apiUrl}. Is the backend running?`);
-      }
     }
   };
 
@@ -96,27 +85,14 @@ export default function AccountManager({ onAccountChange }: AccountManagerProps)
 
     setLoading(true);
     try {
-      const response = await fetch(`${apiUrl}/api/accounts`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: newEmail,
-          password: newPassword,
-          imap_server: imapServer,
-          imap_port: 993,
-          smtp_server: smtpServer,
-          smtp_port: 587,
-        }),
-      });
-
-      const data = await response.json();
-      
-      if (!response.ok) {
-        // HTTP error (4xx, 5xx)
-        const errorMessage = data.detail || data.message || `HTTP ${response.status}: Failed to add account`;
-        alert(`Failed to add account: ${errorMessage}`);
-        return;
-      }
+      const data = await api.addAccount(
+        newEmail,
+        newPassword,
+        imapServer,
+        993,
+        smtpServer,
+        587
+      );
       
       if (data.success) {
         if (data.account?.updated) {
@@ -132,7 +108,7 @@ export default function AccountManager({ onAccountChange }: AccountManagerProps)
         loadAccounts();
         onAccountChange?.();
       } else {
-        alert(`Failed to add account: ${data.message || data.detail || 'Unknown error'}`);
+        alert(`Failed to add account: ${data.error || 'Unknown error'}`);
       }
     } catch (error: any) {
       console.error('Error adding account:', error);
@@ -150,26 +126,14 @@ export default function AccountManager({ onAccountChange }: AccountManagerProps)
 
     setLoading(true);
     try {
-      const response = await fetch(`${apiUrl}/api/accounts`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: loginEmail,
-          password: loginPassword,
-          imap_server: 'imap.gmail.com',
-          imap_port: 993,
-          smtp_server: 'smtp.gmail.com',
-          smtp_port: 587,
-        }),
-      });
-
-      const data = await response.json();
-      
-      if (!response.ok) {
-        const errorMessage = data.detail || data.message || `HTTP ${response.status}: Failed to login`;
-        alert(`Failed to login: ${errorMessage}`);
-        return;
-      }
+      const data = await api.addAccount(
+        loginEmail,
+        loginPassword,
+        'imap.gmail.com',
+        993,
+        'smtp.gmail.com',
+        587
+      );
       
       if (data.success) {
         if (data.account?.updated) {
@@ -183,7 +147,7 @@ export default function AccountManager({ onAccountChange }: AccountManagerProps)
         loadAccounts();
         onAccountChange?.();
       } else {
-        alert(`Failed to login: ${data.message || data.detail || 'Unknown error'}`);
+        alert(`Failed to login: ${data.error || 'Unknown error'}`);
       }
     } catch (error: any) {
       console.error('Error logging in:', error);
@@ -196,15 +160,14 @@ export default function AccountManager({ onAccountChange }: AccountManagerProps)
   const handleSwitchAccount = async (accountId: number) => {
     setLoading(true);
     try {
-      const response = await fetch(`${apiUrl}/api/accounts/${accountId}/activate`, {
-        method: 'PUT',
-      });
+      const data = await api.activateAccount(accountId);
 
-      const data = await response.json();
       if (data.success) {
         setActiveAccountId(accountId);
         onAccountChange?.();
-        alert(`Switched to ${data.account?.account?.email || 'account'}`);
+        alert(data.message || 'Account switched successfully');
+      } else {
+        alert(`Failed to switch account: ${data.error || 'Unknown error'}`);
       }
     } catch (error: any) {
       alert(`Failed to switch account: ${error.message}`);
@@ -220,15 +183,14 @@ export default function AccountManager({ onAccountChange }: AccountManagerProps)
 
     setLoading(true);
     try {
-      const response = await fetch(`${apiUrl}/api/accounts/${accountId}`, {
-        method: 'DELETE',
-      });
+      const data = await api.deleteAccount(accountId);
 
-      const data = await response.json();
       if (data.success) {
-        alert('Account deleted successfully');
+        alert(data.message || 'Account deleted successfully');
         loadAccounts();
         onAccountChange?.();
+      } else {
+        alert('Failed to delete account');
       }
     } catch (error: any) {
       alert(`Failed to delete account: ${error.message}`);
