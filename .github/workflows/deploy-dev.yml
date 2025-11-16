@@ -3,7 +3,7 @@ name: Deploy to Dev (Docker + SSH)
 on:
   push:
     branches:
-      - stg
+      - dev
   workflow_dispatch:
 
 jobs:
