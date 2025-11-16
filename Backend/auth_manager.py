@@ -54,7 +54,7 @@ class AuthManager:
         authorization_url, generated_state = flow.authorization_url(
             access_type='offline',
             include_granted_scopes='true',
-            prompt='consent',  # Force consent to get refresh token
+            prompt='select_account consent',  # Force account selection and consent to allow switching accounts
             state=state
         )
         

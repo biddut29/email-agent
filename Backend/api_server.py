@@ -817,6 +817,8 @@ async def oauth_callback(code: str, state: Optional[str] = None):
         # Security: Do NOT automatically activate account globally
         # Each session uses its own account_id - no global switching
         
+        print(f"🔑 OAuth login - Creating new session for {email} (account_id={account_id})")
+        
         # Create session token
         session_data = {
             'account_id': account_id,
@@ -825,6 +827,8 @@ async def oauth_callback(code: str, state: Optional[str] = None):
             'created_at': datetime.utcnow().isoformat()
         }
         session_token = session_serializer.dumps(session_data)
+        
+        print(f"   Session token: {session_token[:20]}...")
         
         # Store session in memory and MongoDB
         session_data_dict = {
@@ -838,6 +842,9 @@ async def oauth_callback(code: str, state: Optional[str] = None):
         active_sessions[session_token] = session_data_dict
         # Save to MongoDB
         mongodb_manager.save_session(session_token, session_data_dict)
+        
+        print(f"✅ OAuth login successful for {email}")
+        print(f"   Total active sessions: {len(active_sessions)}")
         
         # Redirect to frontend with token
         # Force reload config to ensure we have the latest value
