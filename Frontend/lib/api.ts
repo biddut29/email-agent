@@ -830,15 +830,25 @@ class EmailAgentAPI {
       throw new Error('File ID (saved filename) is required');
     }
     
-    // Get account_id from active account if not provided
+    // Get account_id from session if not provided
     if (!accountId) {
-      const accounts = await this.getAccounts();
-      if (accounts.success && accounts.active_account_id) {
-        accountId = typeof accounts.active_account_id === 'string' 
-          ? parseInt(accounts.active_account_id, 10) 
-          : accounts.active_account_id;
-      } else {
-        throw new Error('No active account found');
+      try {
+        const user = await this.getCurrentUser();
+        if (user.success && user.user && user.user.account_id) {
+          accountId = user.user.account_id;
+        } else {
+          throw new Error('No active account found in session');
+        }
+      } catch (error: any) {
+        // Fallback to global active account if session fails
+        const accounts = await this.getAccounts();
+        if (accounts.success && accounts.active_account_id) {
+          accountId = typeof accounts.active_account_id === 'string' 
+            ? parseInt(accounts.active_account_id, 10) 
+            : accounts.active_account_id;
+        } else {
+          throw new Error('No active account found');
+        }
       }
     }
     

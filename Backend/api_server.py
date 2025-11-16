@@ -1666,7 +1666,7 @@ async def reply_to_email(request: EmailReplyRequest):
 
 # Reply to email using MongoDB data (for AI-suggested replies)
 @app.post("/api/emails/reply-from-mongodb")
-async def reply_from_mongodb(message_id: str, reply_body: str):
+async def reply_from_mongodb(request: Request, message_id: str, reply_body: str):
     """Reply to an email using MongoDB stored data"""
     try:
         if not email_agent:
@@ -1675,9 +1675,10 @@ async def reply_from_mongodb(message_id: str, reply_body: str):
         if not mongodb_manager or mongodb_manager.emails_collection is None:
             raise HTTPException(status_code=500, detail="MongoDB not connected")
         
-        active_account = account_manager.get_active_account()
+        # Get account from session (session-based, not global)
+        active_account = get_account_from_session(request)
         if not active_account:
-            raise HTTPException(status_code=400, detail="No active account")
+            raise HTTPException(status_code=401, detail="Not authenticated")
         
         # Fetch email from MongoDB (with full body - no projection to exclude bodies)
         # Handle both actual Message-ID and synthetic Gmail ID formats
