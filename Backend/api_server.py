@@ -937,14 +937,36 @@ async def get_current_user(request: Request, session_token: Optional[str] = Cook
 
 
 @app.post("/api/auth/logout")
-async def logout(session_token: Optional[str] = Cookie(None)):
-    """Logout user"""
-    if session_token:
+async def logout(request: Request, response: Response, session_token: Optional[str] = Cookie(None)):
+    """Logout user and clear session data"""
+    # Try to get token from cookie or request state
+    token = session_token
+    if not token:
+        token = getattr(request.state, 'session_token', None)
+    
+    if token:
+        print(f"🚪 Logging out - Deleting session: {token[:20]}...")
         # Delete from memory
-        if session_token in active_sessions:
-            del active_sessions[session_token]
+        if token in active_sessions:
+            account_email = active_sessions[token].get('email', 'unknown')
+            print(f"   Removing from memory for account: {account_email}")
+            del active_sessions[token]
         # Delete from MongoDB
-        mongodb_manager.delete_session(session_token)
+        mongodb_manager.delete_session(token)
+        print(f"   Session deleted from MongoDB")
+        print(f"✅ Logout complete - Session cleared")
+    else:
+        print(f"⚠️ Logout called but no session token found")
+    
+    # Clear the session cookie
+    response.delete_cookie(
+        key="session_token",
+        path="/",
+        domain=None,
+        secure=False,
+        httponly=True,
+        samesite="lax"
+    )
     
     return {"success": True, "message": "Logged out successfully"}
 
