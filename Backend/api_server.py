@@ -746,6 +746,9 @@ async def login_with_password(request: Request):
         }
         session_token = session_serializer.dumps(session_data)
         
+        print(f"🔑 Creating new session for {email} (account_id={account_id})")
+        print(f"   Session token: {session_token[:20]}...")
+        
         # Store session in memory and MongoDB
         session_data_dict = {
             'account_id': account_id,
@@ -758,7 +761,8 @@ async def login_with_password(request: Request):
         # Save to MongoDB
         mongodb_manager.save_session(session_token, session_data_dict)
         
-        print(f"✓ Password login successful for {email}")
+        print(f"✅ Password login successful for {email}")
+        print(f"   Total active sessions: {len(active_sessions)}")
         return {
             "success": True,
             "session_token": session_token,
