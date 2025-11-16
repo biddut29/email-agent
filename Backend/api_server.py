@@ -85,7 +85,6 @@ app.add_middleware(
 # Public endpoints that don't require authentication
 PUBLIC_ENDPOINTS = {
     "/",
-    "/api/health",
     "/api/auth/login",
     "/api/auth/login-password",
     "/api/auth/callback",
@@ -635,11 +634,14 @@ async def root():
 
 # Health check
 @app.get("/api/health")
-async def health_check():
-    active_account = account_manager.get_active_account()
+async def health_check(request: Request):
+    # Get account from session (session-based, not global)
+    active_account = get_account_from_session(request)
+    email = active_account['email'] if active_account else config.EMAIL_ADDRESS
+    print(f"🏥 Health check - active_account: {active_account}, email: {email}")
     return {
         "status": "healthy",
-        "email": active_account['email'] if active_account else config.EMAIL_ADDRESS,
+        "email": email,
         "ai_enabled": email_agent.ai_enabled if email_agent else False,
         "accounts_count": account_manager.get_account_count(),
         "version": backend_version
@@ -791,7 +793,11 @@ async def oauth_callback(code: str, state: Optional[str] = None):
         user_info = auth_manager.get_user_info(credentials)
         email = user_info.get('email')
         
+        print(f"🔍 OAuth callback - User info received: {user_info}")
+        print(f"   Email: {email}")
+        
         if not email:
+            print(f"❌ OAuth callback - No email in user_info: {user_info}")
             raise HTTPException(status_code=400, detail="Failed to get user email")
         
         # Convert credentials to dict for storage
@@ -801,18 +807,22 @@ async def oauth_callback(code: str, state: Optional[str] = None):
         account = account_manager.find_account_by_email(email)
         if not account:
             # Create new account from OAuth
+            print(f"📝 OAuth callback - Creating new account for {email}")
             account_id = account_manager.create_account_from_oauth(
                 email=email,
                 name=user_info.get('name', ''),
                 credentials_dict=credentials_dict
             )
+            print(f"   ✅ New account created with ID: {account_id}")
         else:
             # Update existing account with OAuth credentials
             account_id = account['id']
+            print(f"📝 OAuth callback - Updating existing account {account_id} for {email}")
             account_manager.update_account_oauth_credentials(
                 account_id=account_id,
                 credentials_dict=credentials_dict
             )
+            print(f"   ✅ Account {account_id} updated with new OAuth credentials")
         
         # Security: Do NOT automatically activate account globally
         # Each session uses its own account_id - no global switching
@@ -963,13 +973,12 @@ async def logout(request: Request, response: Response, session_token: Optional[s
         account_id = session_data.get('account_id')
         
         # Revoke OAuth token if it exists (forces Google to show account picker on next login)
-        if account_id and session_data.get('credentials'):
+        if account_id:
             try:
                 account = account_manager.get_account(account_id)
                 if account and account.get('oauth_credentials'):
-                    from google.oauth2.credentials import Credentials
-                    from google_auth_oauthlib.flow import Flow
                     import json
+                    import requests
                     
                     # Try to revoke the OAuth token
                     try:
@@ -977,12 +986,22 @@ async def logout(request: Request, response: Response, session_token: Optional[s
                         if isinstance(creds_dict, str):
                             creds_dict = json.loads(creds_dict)
                         
-                        if creds_dict.get('token'):
-                            # Revoke the token
-                            import requests
+                        # Get the access token (could be in 'token' or 'access_token' field)
+                        access_token = creds_dict.get('token') or creds_dict.get('access_token')
+                        
+                        if access_token:
+                            # Revoke the token at Google's revoke endpoint
                             revoke_url = 'https://oauth2.googleapis.com/revoke'
-                            requests.post(revoke_url, params={'token': creds_dict.get('token')}, timeout=5)
-                            print(f"   OAuth token revoked for {account_email}")
+                            response = requests.post(
+                                revoke_url, 
+                                params={'token': access_token}, 
+                                timeout=5,
+                                headers={'Content-type': 'application/x-www-form-urlencoded'}
+                            )
+                            if response.status_code == 200:
+                                print(f"   ✅ OAuth token revoked for {account_email}")
+                            else:
+                                print(f"   ⚠️ OAuth token revocation returned status {response.status_code}")
                     except Exception as revoke_error:
                         print(f"   ⚠️ Could not revoke OAuth token (non-critical): {revoke_error}")
             except Exception as e:
@@ -1010,7 +1029,15 @@ async def logout(request: Request, response: Response, session_token: Optional[s
         samesite="lax"
     )
     
-    return {"success": True, "message": "Logged out successfully"}
+    # Return Google logout URL to clear Google's session state
+    # This forces Google to show account picker on next login
+    google_logout_url = "https://accounts.google.com/logout?continue=https://accounts.google.com"
+    
+    return {
+        "success": True, 
+        "message": "Logged out successfully",
+        "google_logout_url": google_logout_url
+    }
 
 
 # Helper function to get current user from session
@@ -3173,12 +3200,13 @@ async def get_email_reply(message_id: str):
 
 
 @app.get("/api/email-details/{message_id}")
-async def get_email_details_batch(message_id: str):
+async def get_email_details_batch(request: Request, message_id: str):
     """
     Get both AI analysis and reply in one request (faster than separate calls)
     """
     try:
-        active_account = account_manager.get_active_account()
+        # Get account from session (session-based, not global)
+        active_account = get_account_from_session(request)
         if not active_account:
             raise HTTPException(status_code=400, detail="No active account")
         
@@ -3518,10 +3546,11 @@ async def get_mongodb_emails_count(
 
 
 @app.get("/api/mongodb/email/{message_id}")
-async def get_single_email(message_id: str):
+async def get_single_email(request: Request, message_id: str):
     """Get a single email with full body content"""
     try:
-        active_account = account_manager.get_active_account()
+        # Get account from session (session-based, not global)
+        active_account = get_account_from_session(request)
         if not active_account:
             raise HTTPException(status_code=400, detail="No active account")
         

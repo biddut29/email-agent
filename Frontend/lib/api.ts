@@ -780,9 +780,9 @@ class EmailAgentAPI {
     });
   }
 
-  async logout(): Promise<{ success: boolean }> {
+  async logout(): Promise<{ success: boolean; google_logout_url?: string }> {
     const token = localStorage.getItem('session_token');
-    const result = await this.request<{ success: boolean }>('/api/auth/logout', {
+    const result = await this.request<{ success: boolean; google_logout_url?: string }>('/api/auth/logout', {
       method: 'POST',
       credentials: 'include',
       headers: {

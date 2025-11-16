@@ -51,21 +51,45 @@ class AuthManager:
         )
         flow.redirect_uri = self.redirect_uri
         
+        # Use 'select_account consent' to force account selection and re-consent
         authorization_url, generated_state = flow.authorization_url(
             access_type='offline',
             include_granted_scopes='true',
-            prompt='select_account consent',  # Force account selection and consent to allow switching accounts
+            prompt='select_account consent',  # Force account selection and consent screen
             state=state
         )
         
-        # Add a unique timestamp parameter to force Google to show account picker
-        # This prevents Google from auto-selecting the last used account
+        # Add a unique timestamp and random nonce to force Google to show account picker
+        # This prevents Google from auto-selecting the last used account by making each URL unique
         import time
+        import secrets
+        import urllib.parse
         timestamp = int(time.time() * 1000)  # Milliseconds for uniqueness
-        separator = '&' if '?' in authorization_url else '?'
-        authorization_url = f"{authorization_url}{separator}_t={timestamp}"
+        nonce = secrets.token_urlsafe(12)  # Longer random nonce to make URL unique
         
-        print(f"🔑 Generated OAuth URL with account selection prompt: {authorization_url[:100]}...")
+        # Parse the URL to add parameters properly
+        parsed_url = urllib.parse.urlparse(authorization_url)
+        query_params = urllib.parse.parse_qs(parsed_url.query)
+        
+        # Add our unique parameters to prevent caching
+        query_params['_t'] = [str(timestamp)]
+        query_params['_n'] = [nonce]
+        
+        # Rebuild URL with new parameters
+        new_query = urllib.parse.urlencode(query_params, doseq=True)
+        authorization_url = urllib.parse.urlunparse((
+            parsed_url.scheme,
+            parsed_url.netloc,
+            parsed_url.path,
+            parsed_url.params,
+            new_query,
+            parsed_url.fragment
+        ))
+        
+        print(f"🔑 Generated OAuth URL with forced account selection")
+        print(f"   URL (first 200 chars): {authorization_url[:200]}...")
+        print(f"   Parameters: prompt=select_account consent, timestamp={timestamp}, nonce={nonce[:8]}...")
+        print(f"   Full URL length: {len(authorization_url)} characters")
         
         return authorization_url, generated_state
     

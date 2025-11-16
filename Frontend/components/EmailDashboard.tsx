@@ -88,10 +88,44 @@ export default function EmailDashboard() {
   const [emailDetailTab, setEmailDetailTab] = useState<'message' | 'analysis' | 'reply'>('message');
   const emailsPerPage = 20;
 
-  // Load health status on mount
+  // Track current account to detect account changes
+  const [currentAccountId, setCurrentAccountId] = useState<number | null>(null);
+
+  // Load health status on mount and clear emails
   useEffect(() => {
+    // Clear emails on mount to prevent showing old account's emails
+    setEmails([]);
+    setTotalEmails(0);
     checkHealth();
   }, []);
+
+  // Track account changes and reload emails when account changes
+  useEffect(() => {
+    const checkAccountChange = async () => {
+      try {
+        const response = await api.getCurrentUser();
+        if (response && response.success && response.user && response.user.account_id) {
+          const accountId = response.user.account_id;
+          if (currentAccountId !== null && currentAccountId !== accountId) {
+            // Account changed - clear emails and reload
+            console.log(`🔄 Account changed from ${currentAccountId} to ${accountId} - clearing emails`);
+            setEmails([]);
+            setTotalEmails(0);
+            setCurrentPage(1);
+            if (activeTab === 'inbox') {
+              await loadEmailsFromMongoDB();
+            }
+          }
+          setCurrentAccountId(accountId);
+        }
+      } catch (error) {
+        console.error('Error checking account:', error);
+      }
+    };
+    
+    checkAccountChange();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [healthStatus]);
 
   // Load emails from MongoDB when inbox tab is active
   useEffect(() => {
@@ -185,25 +219,26 @@ export default function EmailDashboard() {
 
   const handleLogout = async () => {
     try {
+      // Call logout API to clear backend session and revoke OAuth token
       await api.logout();
-      // Clear all local storage and cookies
-      localStorage.clear();
-      sessionStorage.clear();
-      // Clear all cookies
-      document.cookie.split(";").forEach((c) => {
-        document.cookie = c
-          .replace(/^ +/, "")
-          .replace(/=.*/, "=;expires=" + new Date().toUTCString() + ";path=/");
-      });
-      // Force full page reload to clear all state
-      window.location.href = '/login';
     } catch (error) {
-      console.error('Logout error:', error);
-      // Still clear everything and redirect even if logout API call fails
-      localStorage.clear();
-      sessionStorage.clear();
-      window.location.href = '/login';
+      console.error('Logout API error (continuing anyway):', error);
     }
+    
+    // Clear all local storage and cookies
+    localStorage.clear();
+    sessionStorage.clear();
+    // Clear all cookies
+    document.cookie.split(";").forEach((c) => {
+      document.cookie = c
+        .replace(/^ +/, "")
+        .replace(/=.*/, "=;expires=" + new Date().toUTCString() + ";path=/");
+    });
+    
+    // Redirect directly to login page
+    // OAuth URL parameters (prompt='select_account consent' and login_hint='') 
+    // will force Google to show account picker on next login
+    window.location.href = '/login';
   };
 
   const checkHealth = async () => {
