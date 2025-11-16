@@ -711,6 +711,54 @@ class MongoDBManager:
         except Exception as e:
             return {"error": str(e)}
     
+    def clear_account_replies(self, account_id: int) -> Dict:
+        """
+        Clear all replies for a specific account
+        
+        Args:
+            account_id: Account ID to clear
+            
+        Returns:
+            Dict with result
+        """
+        if self.replies_collection is None:
+            return {"error": "MongoDB not connected"}
+        
+        try:
+            result = self.replies_collection.delete_many({"account_id": account_id})
+            
+            return {
+                "success": True,
+                "deleted": result.deleted_count
+            }
+        
+        except Exception as e:
+            return {"error": str(e)}
+    
+    def clear_account_ai_analysis(self, account_id: int) -> Dict:
+        """
+        Clear all AI analysis for a specific account
+        
+        Args:
+            account_id: Account ID to clear
+            
+        Returns:
+            Dict with result
+        """
+        if self.ai_analysis_collection is None:
+            return {"error": "MongoDB not connected"}
+        
+        try:
+            result = self.ai_analysis_collection.delete_many({"account_id": account_id})
+            
+            return {
+                "success": True,
+                "deleted": result.deleted_count
+            }
+        
+        except Exception as e:
+            return {"error": str(e)}
+    
     def save_reply(self, email_message_id: str, account_id: int, reply_data: Dict) -> Dict:
         """
         Save a sent reply to MongoDB

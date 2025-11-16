@@ -2403,7 +2403,7 @@ async def delete_account(account_id: int):
         print(f"🗑️  Starting deletion of account {account_id}...")
         
         # Run MongoDB and Vector DB deletions in parallel for better performance
-        executor = ThreadPoolExecutor(max_workers=2)
+        executor = ThreadPoolExecutor(max_workers=4)
         loop = asyncio.get_event_loop()
         
         # Delete all emails from MongoDB for this account
@@ -2417,6 +2417,28 @@ async def delete_account(account_id: int):
         else:
             mongo_future = None
         
+        # Delete all replies from MongoDB for this account
+        replies_result = {"deleted": 0}
+        if mongodb_manager.replies_collection is not None:
+            replies_future = loop.run_in_executor(
+                executor,
+                mongodb_manager.clear_account_replies,
+                account_id
+            )
+        else:
+            replies_future = None
+        
+        # Delete all AI analysis from MongoDB for this account
+        analysis_result = {"deleted": 0}
+        if mongodb_manager.ai_analysis_collection is not None:
+            analysis_future = loop.run_in_executor(
+                executor,
+                mongodb_manager.clear_account_ai_analysis,
+                account_id
+            )
+        else:
+            analysis_future = None
+        
         # Delete all emails from vector store for this account
         vector_result = {"deleted": 0}
         if vector_store.collection:
@@ -2428,11 +2450,21 @@ async def delete_account(account_id: int):
         else:
             vector_future = None
         
-        # Wait for both deletions to complete
+        # Wait for all deletions to complete
         if mongo_future:
             mongo_result = await mongo_future
             if mongo_result.get('success'):
                 print(f"✓ Deleted {mongo_result.get('deleted', 0)} emails from MongoDB for account {account_id}")
+        
+        if replies_future:
+            replies_result = await replies_future
+            if replies_result.get('success'):
+                print(f"✓ Deleted {replies_result.get('deleted', 0)} replies from MongoDB for account {account_id}")
+        
+        if analysis_future:
+            analysis_result = await analysis_future
+            if analysis_result.get('success'):
+                print(f"✓ Deleted {analysis_result.get('deleted', 0)} AI analyses from MongoDB for account {account_id}")
         
         if vector_future:
             vector_result = await vector_future
@@ -2470,7 +2502,10 @@ async def delete_account(account_id: int):
             "success": True,
             "message": "Account and all related data deleted successfully",
             "mongo_deleted": mongo_result.get('deleted', 0),
+            "replies_deleted": replies_result.get('deleted', 0),
+            "analysis_deleted": analysis_result.get('deleted', 0),
             "vector_deleted": vector_result.get('deleted', 0),
+            "attachments_deleted": deleted_files,
             "remaining_accounts": remaining_count
         }
     except HTTPException:
