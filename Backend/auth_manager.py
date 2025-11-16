@@ -58,6 +58,8 @@ class AuthManager:
             state=state
         )
         
+        print(f"🔑 Generated OAuth URL with account selection prompt: {authorization_url[:100]}...")
+        
         return authorization_url, generated_state
     
     def get_user_info(self, credentials: Credentials) -> Dict:
