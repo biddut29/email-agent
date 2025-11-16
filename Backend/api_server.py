@@ -2517,7 +2517,7 @@ async def delete_account(account_id: int):
 
 @app.delete("/api/accounts/all")
 async def delete_all_accounts():
-    """Delete all accounts and all related data (emails, replies, vector store)"""
+    """Delete all accounts and all related data (emails, replies, AI analysis, attachments, vector store)"""
     try:
         print("🗑️  Starting deletion of ALL accounts and data...")
         
@@ -2539,6 +2539,21 @@ async def delete_all_accounts():
             mongo_replies_deleted = result.deleted_count
             print(f"✓ Deleted {mongo_replies_deleted} replies from MongoDB")
         
+        # Delete all AI analysis from MongoDB
+        mongo_analysis_deleted = 0
+        if mongodb_manager.ai_analysis_collection is not None:
+            result = mongodb_manager.ai_analysis_collection.delete_many({})
+            mongo_analysis_deleted = result.deleted_count
+            print(f"✓ Deleted {mongo_analysis_deleted} AI analyses from MongoDB")
+        
+        # Delete all attachments from filesystem for all accounts
+        total_attachments_deleted = 0
+        for account_id in account_ids:
+            deleted_files = attachment_storage.delete_account_attachments(account_id)
+            total_attachments_deleted += deleted_files
+        if total_attachments_deleted > 0:
+            print(f"✓ Deleted {total_attachments_deleted} attachment files")
+        
         # Clear all data from vector store
         vector_cleared = False
         if vector_store.collection:
@@ -2555,6 +2570,7 @@ async def delete_all_accounts():
                 print(f"⚠️  Error clearing vector store: {e}")
         
         # Delete all sessions
+        deleted_sessions = 0
         if mongodb_manager.db is not None:
             sessions_collection = mongodb_manager.db['sessions']
             result = sessions_collection.delete_many({})
@@ -2580,10 +2596,15 @@ async def delete_all_accounts():
             "accounts_deleted": accounts_deleted,
             "emails_deleted": mongo_emails_deleted,
             "replies_deleted": mongo_replies_deleted,
+            "analysis_deleted": mongo_analysis_deleted,
+            "attachments_deleted": total_attachments_deleted,
+            "sessions_deleted": deleted_sessions,
             "vector_cleared": vector_cleared
         }
     except Exception as e:
         print(f"❌ Error deleting all accounts: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
