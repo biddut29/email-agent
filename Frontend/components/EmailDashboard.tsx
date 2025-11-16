@@ -186,11 +186,23 @@ export default function EmailDashboard() {
   const handleLogout = async () => {
     try {
       await api.logout();
-      router.push('/login');
+      // Clear all local storage and cookies
+      localStorage.clear();
+      sessionStorage.clear();
+      // Clear all cookies
+      document.cookie.split(";").forEach((c) => {
+        document.cookie = c
+          .replace(/^ +/, "")
+          .replace(/=.*/, "=;expires=" + new Date().toUTCString() + ";path=/");
+      });
+      // Force full page reload to clear all state
+      window.location.href = '/login';
     } catch (error) {
       console.error('Logout error:', error);
-      // Still redirect to login even if logout API call fails
-      router.push('/login');
+      // Still clear everything and redirect even if logout API call fails
+      localStorage.clear();
+      sessionStorage.clear();
+      window.location.href = '/login';
     }
   };
 
