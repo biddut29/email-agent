@@ -1910,6 +1910,7 @@ async def analyze_email(request: AIAnalysisRequest):
 # Generate AI response
 @app.post("/api/emails/generate-response")
 async def generate_response(
+    request: Request,
     email_id: str,
     tone: str = "professional",
     message_id: Optional[str] = None  # Optional: use message_id for MongoDB emails
@@ -1926,7 +1927,7 @@ async def generate_response(
             if not mongodb_manager or mongodb_manager.emails_collection is None:
                 raise HTTPException(status_code=500, detail="MongoDB not connected")
             
-            active_account = account_manager.get_active_account()
+            active_account = get_account_from_session(request)
             if not active_account:
                 raise HTTPException(status_code=400, detail="No active account")
             
@@ -3137,6 +3138,7 @@ async def get_email_details_batch(message_id: str):
 
 @app.get("/api/mongodb/emails")
 async def get_mongodb_emails(
+    request: Request,
     limit: int = 20,
     skip: int = 0,
     date_from: Optional[str] = None,
@@ -3158,8 +3160,8 @@ async def get_mongodb_emails(
     import sys
     print(f"🔍 API CALLED: get_mongodb_emails(date_from={date_from}, date_to={date_to}, limit={limit}, skip={skip})", file=sys.stderr, flush=True)
     try:
-        # Get active account
-        active_account = account_manager.get_active_account()
+        # Get account from session (session-based, not global)
+        active_account = get_account_from_session(request)
         if not active_account:
             raise HTTPException(status_code=400, detail="No active account")
         
@@ -3352,6 +3354,7 @@ async def get_mongodb_emails(
 
 @app.get("/api/mongodb/emails/count")
 async def get_mongodb_emails_count(
+    request: Request,
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
     unread_only: bool = False,
@@ -3364,20 +3367,20 @@ async def get_mongodb_emails_count(
         date_from: Start date filter (YYYY-MM-DD)
         date_to: End date filter (YYYY-MM-DD)
         unread_only: Only count unread emails
-        account_id: Specific account ID (defaults to active account)
+        account_id: Specific account ID (defaults to session account)
     
     Returns:
         Email count matching the filters
     """
     try:
-        # Get account (use provided account_id or active account)
+        # Get account (use provided account_id or session account)
         if account_id:
             account = account_manager.get_account(account_id)
             if not account:
                 raise HTTPException(status_code=404, detail=f"Account {account_id} not found")
             target_account = account
         else:
-            target_account = account_manager.get_active_account()
+            target_account = get_account_from_session(request)
             if not target_account:
                 raise HTTPException(status_code=400, detail="No active account")
         
