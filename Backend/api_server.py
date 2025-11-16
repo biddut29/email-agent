@@ -290,14 +290,15 @@ class SemanticSearchRequest(BaseModel):
 # ============================================================================
 
 @app.get("/api/emails/{message_id}/attachments")
-async def list_email_attachments(message_id: str, session_token: str = Cookie(None)):
+async def list_email_attachments(request: Request, message_id: str):
     """List all attachments for an email"""
     try:
-        if not session_token or session_token not in active_sessions:
+        # Get account from session (session-based, not global)
+        active_account = get_account_from_session(request)
+        if not active_account:
             raise HTTPException(status_code=401, detail="Not authenticated")
         
-        session_data = active_sessions[session_token]
-        account_id = session_data.get('account_id')
+        account_id = active_account['id']
         
         email = mongodb_manager.emails_collection.find_one({
             "message_id": message_id,
@@ -333,14 +334,20 @@ async def list_email_attachments(message_id: str, session_token: str = Cookie(No
 # ============================================================================
 
 @app.get("/api/attachments/download")
-async def download_email_attachment(message_id: str = Query(...),
+async def download_email_attachment(request: Request,
+                                   message_id: str = Query(...),
                                    account_id: int = Query(...),
-                                   file_id: str = Query(...),
-                                   session_token: str = Cookie(None)):
+                                   file_id: str = Query(...)):
     """Download attachment (triggers browser download)"""
     import sys
     print(f"🔍 DOWNLOAD ENDPOINT CALLED: message_id={message_id}, account_id={account_id}, file_id={file_id}", flush=True)
     try:
+        # Get account from session (session-based, not global)
+        active_account = get_account_from_session(request)
+        if not active_account:
+            print(f"❌ No active account found in session")
+            raise HTTPException(status_code=401, detail="Not authenticated")
+        
         # URL decode message_id and file_id if needed
         from urllib.parse import unquote
         message_id_decoded = unquote(message_id)
@@ -362,14 +369,8 @@ async def download_email_attachment(message_id: str = Query(...),
             print(f"❌ Invalid message_id: '{message_id}'", flush=True)
             raise HTTPException(status_code=400, detail="Invalid message ID: message_id is required")
         
-        # Validate authentication
-        if not session_token or session_token not in active_sessions:
-            print(f"❌ Not authenticated: session_token={session_token is not None}")
-            raise HTTPException(status_code=401, detail="Not authenticated")
-        
         # Verify the account_id in query matches the session (security check)
-        session_data = active_sessions[session_token]
-        session_account_id = session_data.get('account_id')
+        session_account_id = active_account['id']
         
         if session_account_id != account_id:
             print(f"❌ Account ID mismatch: Query={account_id}, Session={session_account_id}", flush=True)
