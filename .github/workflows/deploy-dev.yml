@@ -66,6 +66,11 @@ jobs:
             if [ -d "/opt/email-agent/.git" ]; then
               echo "📁 Project directory exists, navigating..."
               cd /opt/email-agent
+              
+              # Fix permissions before pulling to avoid permission errors
+              echo "🔧 Fixing permissions..."
+              sudo chown -R $VM_USER_VAL:$VM_USER_VAL /opt/email-agent
+              
               echo "📥 Pulling latest code from dev branch..."
               git fetch origin
               git checkout dev
