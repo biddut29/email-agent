@@ -35,3 +35,13 @@ google-auth==2.25.2
 google-auth-oauthlib==1.2.0
 google-auth-httplib2==0.2.0
 
+# OCR and PDF text extraction
+Pillow>=10.0.0  # Image processing for OCR
+pytesseract>=0.3.10  # OCR wrapper (requires Tesseract OCR installed)
+pdfplumber>=0.10.0  # PDF text extraction
+PyPDF2>=3.0.0  # Alternative PDF library (fallback)
+
+# Word document and other document formats
+python-docx>=1.1.0  # Word .docx files
+openpyxl>=3.1.0  # Excel .xlsx files
+

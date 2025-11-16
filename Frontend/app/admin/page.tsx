@@ -26,6 +26,7 @@ import {
   Search
 } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
+import { api } from '@/lib/api';
 
 interface Account {
   id: number;
@@ -66,18 +67,14 @@ export default function AdminPage() {
   const loadAccounts = async () => {
     setLoading(true);
     try {
-      const response = await fetch(`${apiUrl}/api/accounts`);
-      
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-      
-      const data = await response.json();
+      const data = await api.getAccounts();
       
       if (data.success) {
-        const formattedAccounts = data.accounts.map((acc: Account & { id?: string | number }) => ({
+        const formattedAccounts = data.accounts.map((acc: any) => ({
           ...acc,
-          id: typeof acc.id === 'string' ? parseInt(acc.id, 10) : acc.id
+          id: typeof acc.id === 'string' ? parseInt(acc.id, 10) : acc.id,
+          created_at: acc.created_at || new Date().toISOString(),
+          auto_reply_enabled: acc.auto_reply_enabled || false
         })) as Account[];
         
         setAccounts(formattedAccounts);
@@ -106,6 +103,7 @@ export default function AdminPage() {
     try {
       const response = await fetch(`${apiUrl}/api/accounts/${accountId}`, {
         method: 'DELETE',
+        credentials: 'include',
       });
 
       if (!response.ok) {
@@ -125,6 +123,7 @@ export default function AdminPage() {
       // Toggle mode - allows multiple active accounts
       const response = await fetch(`${apiUrl}/api/accounts/${accountId}/activate?toggle=true`, {
         method: 'PUT',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
         },
@@ -146,7 +145,9 @@ export default function AdminPage() {
 
   const loadGlobalAutoReply = async () => {
     try {
-      const response = await fetch(`${apiUrl}/api/auto-reply/status`);
+      const response = await fetch(`${apiUrl}/api/auto-reply/status`, {
+        credentials: 'include',
+      });
       if (response.ok) {
         const data = await response.json();
         setGlobalAutoReply(data.auto_reply_enabled || false);
@@ -160,6 +161,7 @@ export default function AdminPage() {
     try {
       const response = await fetch(`${apiUrl}/api/auto-reply/toggle?enabled=${enabled}`, {
         method: 'POST',
+        credentials: 'include',
       });
 
       if (!response.ok) {
@@ -178,6 +180,7 @@ export default function AdminPage() {
     try {
       const response = await fetch(`${apiUrl}/api/accounts/${accountId}/auto-reply?enabled=${enabled}`, {
         method: 'PUT',
+        credentials: 'include',
       });
 
       if (!response.ok) {
@@ -200,6 +203,7 @@ export default function AdminPage() {
     try {
       const response = await fetch(`${apiUrl}/api/accounts/${accountId}/custom-prompt`, {
         method: 'PUT',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ custom_prompt: customPromptValue })
       });
@@ -239,6 +243,7 @@ export default function AdminPage() {
     try {
       const response = await fetch(`${apiUrl}/api/search/remove-sent-emails`, {
         method: 'DELETE',
+        credentials: 'include',
       });
 
       if (!response.ok) {
@@ -282,6 +287,7 @@ export default function AdminPage() {
     try {
       const response = await fetch(`${apiUrl}/api/accounts/all`, {
         method: 'DELETE',
+        credentials: 'include',
       });
 
       if (!response.ok) {

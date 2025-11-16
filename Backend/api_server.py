@@ -3,7 +3,7 @@ FastAPI Server for Email Agent
 Provides REST API endpoints for the frontend
 """
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Cookie
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Cookie, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, RedirectResponse, JSONResponse, Response
 from pydantic import BaseModel, EmailStr
@@ -45,8 +45,20 @@ config_manager = None
 # Session serializer
 session_serializer = URLSafeTimedSerializer(config.SESSION_SECRET)
 
-# Store active sessions (in production, use Redis or database)
+# Store active sessions (loaded from MongoDB on startup, persisted to MongoDB)
 active_sessions = {}
+
+def load_sessions_from_db():
+    """Load all active sessions from MongoDB on startup"""
+    global active_sessions
+    try:
+        active_sessions = mongodb_manager.load_all_sessions()
+        print(f"✓ Loaded {len(active_sessions)} active sessions from MongoDB")
+        # Clean up expired sessions
+        mongodb_manager.cleanup_expired_sessions()
+    except Exception as e:
+        print(f"⚠️  Failed to load sessions from MongoDB: {e}")
+        active_sessions = {}
 
 
 # Initialize FastAPI app
@@ -78,6 +90,7 @@ PUBLIC_ENDPOINTS = {
     "/api/auth/login-password",
     "/api/auth/callback",
     "/api/auth/me",  # Auth check endpoint (validates token internally)
+    "/api/notifications/stream",  # SSE endpoint (validates token internally)
     "/docs",
     "/redoc",
     "/openapi.json"
@@ -127,21 +140,42 @@ async def authenticate_request(request: Request, call_next):
         # Verify token signature and expiry
         session_data = session_serializer.loads(session_token, max_age=604800)  # 7 days
         
-        # Check if session exists in active_sessions
+        # Check if session exists in active_sessions (memory cache)
         session = active_sessions.get(session_token)
         
-        # If session not found but token is valid, recreate it from token data
-        # This handles cases where backend restarted and active_sessions was cleared
+        # If not in memory, try loading from MongoDB
+        if not session:
+            session = mongodb_manager.get_session(session_token)
+            if session:
+                # Restore to memory cache
+                active_sessions[session_token] = session
+                print(f"🔍 Session restored from MongoDB for {session.get('email')}")
+        
+        # If still not found but token is valid, recreate it from token data
+        # This handles cases where session was deleted from DB but token is still valid
         if not session:
             # Recreate session from token data if token is still valid
             session = {
                 'account_id': session_data.get('account_id'),
                 'email': session_data.get('email'),
                 'name': session_data.get('name', ''),
-                'created_at': session_data.get('created_at')
+                'created_at': session_data.get('created_at', datetime.utcnow().isoformat()),
+                'expires_at': (datetime.utcnow() + timedelta(days=7)).isoformat()
             }
-            # Restore session in active_sessions
+            # Restore session in memory and save to MongoDB
             active_sessions[session_token] = session
+            mongodb_manager.save_session(session_token, session)
+            print(f"🔍 Session recreated from token for {session.get('email')}")
+        
+        # Update last accessed time (async, non-blocking)
+        if session:
+            session['last_accessed'] = datetime.utcnow().isoformat()
+            # Update in background (non-blocking)
+            import threading
+            threading.Thread(
+                target=lambda: mongodb_manager.save_session(session_token, session),
+                daemon=True
+            ).start()
         
         # Add session info to request state for use in endpoints
         request.state.session = session
@@ -161,6 +195,17 @@ async def authenticate_request(request: Request, call_next):
             }
         )
 
+
+# Helper function to get account from session (session-based, not global)
+def get_account_from_session(request: Request) -> Optional[Dict]:
+    """
+    Get account from session (session-based, not global active account)
+    This ensures account isolation - each session uses its own account
+    """
+    account_id = getattr(request.state, 'account_id', None)
+    if account_id:
+        return account_manager.get_account(account_id)
+    return None
 
 # Initialize email agent and chat agent globally
 email_agent = None
@@ -263,12 +308,19 @@ async def list_email_attachments(message_id: str, session_token: str = Cookie(No
         if not email:
             raise HTTPException(status_code=404, detail="Email not found")
         
+        # Filter attachments to only include those with valid saved_filename
+        all_attachments = email.get('attachments', [])
+        valid_attachments = [
+            att for att in all_attachments 
+            if att.get('saved_filename') and att.get('saved_filename') != 'undefined' and att.get('saved_filename').strip() != ''
+        ]
+        
         return {
             "success": True,
             "message_id": message_id,
-            "has_attachments": email.get('has_attachments', False),
-            "count": len(email.get('attachments', [])),
-            "attachments": email.get('attachments', [])
+            "has_attachments": len(valid_attachments) > 0,
+            "count": len(valid_attachments),
+            "attachments": valid_attachments
         }
     
     except HTTPException:
@@ -276,6 +328,118 @@ async def list_email_attachments(message_id: str, session_token: str = Cookie(No
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# ============================================================================
+# DOWNLOAD ATTACHMENT ENDPOINT (must come before regular attachment endpoint)
+# ============================================================================
+
+@app.get("/api/attachments/download")
+async def download_email_attachment(message_id: str = Query(...),
+                                   account_id: int = Query(...),
+                                   file_id: str = Query(...),
+                                   session_token: str = Cookie(None)):
+    """Download attachment (triggers browser download)"""
+    import sys
+    print(f"🔍 DOWNLOAD ENDPOINT CALLED: message_id={message_id}, account_id={account_id}, file_id={file_id}", flush=True)
+    try:
+        # URL decode message_id and file_id if needed
+        from urllib.parse import unquote
+        message_id_decoded = unquote(message_id)
+        file_id_decoded = unquote(file_id)
+        
+        print(f"🔍 After decoding: message_id={message_id_decoded}, file_id={file_id_decoded}", flush=True)
+        
+        # Use decoded values
+        message_id = message_id_decoded
+        saved_filename = file_id_decoded
+        
+        # Validate file_id is not undefined or empty
+        if not saved_filename or saved_filename == 'undefined' or saved_filename.strip() == '':
+            print(f"❌ Invalid file_id: '{saved_filename}'", flush=True)
+            raise HTTPException(status_code=400, detail="Invalid file ID: file_id is required and cannot be undefined")
+        
+        # Validate message_id
+        if not message_id or message_id.strip() == '':
+            print(f"❌ Invalid message_id: '{message_id}'", flush=True)
+            raise HTTPException(status_code=400, detail="Invalid message ID: message_id is required")
+        
+        # Validate authentication
+        if not session_token or session_token not in active_sessions:
+            print(f"❌ Not authenticated: session_token={session_token is not None}")
+            raise HTTPException(status_code=401, detail="Not authenticated")
+        
+        # Verify the account_id in query matches the session (security check)
+        session_data = active_sessions[session_token]
+        session_account_id = session_data.get('account_id')
+        
+        if session_account_id != account_id:
+            print(f"❌ Account ID mismatch: Query={account_id}, Session={session_account_id}", flush=True)
+            raise HTTPException(status_code=403, detail="Account ID mismatch")
+        
+        print(f"🔍 Looking for attachment: account_id={account_id}, file_id={saved_filename}", flush=True)
+        
+        # Log the expected file path
+        from pathlib import Path
+        account_dir = attachment_storage.base_dir / f"account_{account_id}"
+        expected_path = account_dir / saved_filename
+        
+        print(f"🔍 Account directory: {account_dir}", flush=True)
+        print(f"🔍 Account directory exists: {account_dir.exists()}", flush=True)
+        print(f"🔍 Expected file path: {expected_path}", flush=True)
+        print(f"🔍 File exists: {expected_path.exists()}", flush=True)
+        
+        # List files in account directory for debugging
+        if account_dir.exists():
+            files = list(account_dir.glob("*"))
+            print(f"🔍 Files in account_{account_id}: {[f.name for f in files[:5]]}", flush=True)
+        
+        binary_data = attachment_storage.get_attachment(
+            account_id=account_id,
+            message_id=message_id,
+            saved_filename=saved_filename
+        )
+        
+        if binary_data is None:
+            print(f"❌ Attachment not found: account_id={account_id}, saved_filename={saved_filename}", flush=True)
+            print(f"❌ Expected path was: {expected_path}", flush=True)
+            raise HTTPException(status_code=404, detail="Attachment not found")
+        
+        print(f"✅ Found attachment: {len(binary_data)} bytes")
+        
+        email = mongodb_manager.emails_collection.find_one({
+            "message_id": message_id,
+            "account_id": account_id
+        })
+        
+        original_filename = saved_filename
+        content_type = 'application/octet-stream'
+        
+        if email and email.get('attachments'):
+            att_metadata = next(
+                (a for a in email['attachments'] if a.get('saved_filename') == saved_filename),
+                None
+            )
+            if att_metadata:
+                original_filename = att_metadata.get('original_filename', saved_filename)
+                content_type = att_metadata.get('content_type', content_type)
+        
+        return Response(
+            content=binary_data,
+            media_type=content_type,
+            headers={
+                "Content-Disposition": f'attachment; filename="{original_filename}"'
+            }
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# GET ATTACHMENT ENDPOINT (returns base64)
+# ============================================================================
 
 @app.get("/api/emails/{message_id}/attachments/{saved_filename:path}")
 async def get_email_attachment(message_id: str, saved_filename: str, 
@@ -330,57 +494,6 @@ async def get_email_attachment(message_id: str, saved_filename: str,
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/emails/{message_id}/attachments/{saved_filename:path}/download")
-async def download_email_attachment(message_id: str, saved_filename: str,
-                                   session_token: str = Cookie(None)):
-    """Download attachment (triggers browser download)"""
-    try:
-        if not session_token or session_token not in active_sessions:
-            raise HTTPException(status_code=401, detail="Not authenticated")
-        
-        session_data = active_sessions[session_token]
-        account_id = session_data.get('account_id')
-        
-        binary_data = attachment_storage.get_attachment(
-            account_id=account_id,
-            message_id=message_id,
-            saved_filename=saved_filename
-        )
-        
-        if binary_data is None:
-            raise HTTPException(status_code=404, detail="Attachment not found")
-        
-        email = mongodb_manager.emails_collection.find_one({
-            "message_id": message_id,
-            "account_id": account_id
-        })
-        
-        original_filename = saved_filename
-        content_type = 'application/octet-stream'
-        
-        if email and email.get('attachments'):
-            att_metadata = next(
-                (a for a in email['attachments'] if a.get('saved_filename') == saved_filename),
-                None
-            )
-            if att_metadata:
-                original_filename = att_metadata.get('original_filename', saved_filename)
-                content_type = att_metadata.get('content_type', content_type)
-        
-        return Response(
-            content=binary_data,
-            media_type=content_type,
-            headers={
-                "Content-Disposition": f'attachment; filename="{original_filename}"'
-            }
-        )
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 @app.get("/api/storage/stats")
 async def get_storage_statistics():
     """Get attachment storage statistics"""
@@ -397,6 +510,9 @@ async def startup_event():
     
     # Initialize account manager with MongoDB
     account_manager = AccountManager(mongodb_manager=mongodb_manager)
+    
+    # Load sessions from MongoDB (persist across restarts)
+    load_sessions_from_db()
     
     # Initialize config manager (DO NOT auto-load from .env)
     try:
@@ -614,9 +730,8 @@ async def login_with_password(request: Request):
         if not account_id:
             raise HTTPException(status_code=500, detail="Failed to create or update account")
         
-        # Activate this account
-        account_manager.set_active_account(account_id)
-        
+        # Security: Do NOT automatically activate account globally
+        # Each session uses its own account_id - no global switching
         # Get account details
         account = account_manager.get_account(account_id)
         if not account:
@@ -631,13 +746,17 @@ async def login_with_password(request: Request):
         }
         session_token = session_serializer.dumps(session_data)
         
-        # Store session
-        active_sessions[session_token] = {
+        # Store session in memory and MongoDB
+        session_data_dict = {
             'account_id': account_id,
             'email': email,
             'name': email.split('@')[0],
+            'created_at': datetime.utcnow().isoformat(),
             'expires_at': (datetime.utcnow() + timedelta(days=7)).isoformat()
         }
+        active_sessions[session_token] = session_data_dict
+        # Save to MongoDB
+        mongodb_manager.save_session(session_token, session_data_dict)
         
         print(f"✓ Password login successful for {email}")
         return {
@@ -691,8 +810,8 @@ async def oauth_callback(code: str, state: Optional[str] = None):
                 credentials_dict=credentials_dict
             )
         
-        # Activate this account
-        account_manager.set_active_account(account_id)
+        # Security: Do NOT automatically activate account globally
+        # Each session uses its own account_id - no global switching
         
         # Create session token
         session_data = {
@@ -703,14 +822,18 @@ async def oauth_callback(code: str, state: Optional[str] = None):
         }
         session_token = session_serializer.dumps(session_data)
         
-        # Store session
-        active_sessions[session_token] = {
+        # Store session in memory and MongoDB
+        session_data_dict = {
             'account_id': account_id,
             'email': email,
             'name': user_info.get('name', ''),
+            'created_at': datetime.utcnow().isoformat(),
             'credentials': credentials_dict,
             'expires_at': (datetime.utcnow() + timedelta(days=7)).isoformat()
         }
+        active_sessions[session_token] = session_data_dict
+        # Save to MongoDB
+        mongodb_manager.save_session(session_token, session_data_dict)
         
         # Redirect to frontend with token
         # Force reload config to ensure we have the latest value
@@ -768,8 +891,31 @@ async def get_current_user(request: Request, session_token: Optional[str] = Cook
         print(f"🔍 Auth check - Active sessions count: {len(active_sessions)}")
         print(f"🔍 Auth check - Session found in active_sessions: {session is not None}")
         
+        # If not in memory, try loading from MongoDB (same logic as middleware)
         if not session:
-            print(f"❌ Auth check - Session not found in active_sessions")
+            print(f"🔍 Auth check - Session not in memory, checking MongoDB...")
+            session = mongodb_manager.get_session(session_token)
+            if session:
+                # Restore to memory cache
+                active_sessions[session_token] = session
+                print(f"🔍 Auth check - Session restored from MongoDB for {session.get('email')}")
+            else:
+                # If still not found but token is valid, recreate it from token data
+                print(f"🔍 Auth check - Session not in MongoDB, recreating from token data...")
+                session = {
+                    'account_id': session_data.get('account_id'),
+                    'email': session_data.get('email'),
+                    'name': session_data.get('name', ''),
+                    'created_at': session_data.get('created_at', datetime.utcnow().isoformat()),
+                    'expires_at': (datetime.utcnow() + timedelta(days=7)).isoformat()
+                }
+                # Restore session in memory and save to MongoDB
+                active_sessions[session_token] = session
+                mongodb_manager.save_session(session_token, session)
+                print(f"🔍 Auth check - Session recreated from token for {session.get('email')}")
+        
+        if not session:
+            print(f"❌ Auth check - Could not restore session")
             raise HTTPException(status_code=401, detail="Session expired")
         
         print(f"✅ Auth check - Success for account_id={session['account_id']}, email={session['email']}")
@@ -793,8 +939,12 @@ async def get_current_user(request: Request, session_token: Optional[str] = Cook
 @app.post("/api/auth/logout")
 async def logout(session_token: Optional[str] = Cookie(None)):
     """Logout user"""
-    if session_token and session_token in active_sessions:
-        del active_sessions[session_token]
+    if session_token:
+        # Delete from memory
+        if session_token in active_sessions:
+            del active_sessions[session_token]
+        # Delete from MongoDB
+        mongodb_manager.delete_session(session_token)
     
     return {"success": True, "message": "Logged out successfully"}
 
@@ -815,9 +965,85 @@ def get_current_account_id(session_token: Optional[str] = Cookie(None)) -> Optio
     return None
 
 
+def extract_attachment_binary_data(emails: List[Dict], receiver, account_id: int) -> None:
+    """
+    Extract binary data for attachments in emails and add it for filesystem storage.
+    Modifies emails in-place to add binary_data to attachment dicts.
+    
+    Args:
+        emails: List of email dictionaries
+        receiver: EmailReceiver instance with connection to mail server
+        account_id: Account ID for logging
+    """
+    if not emails or not receiver:
+        print(f"⚠️  Skipping attachment extraction: emails={len(emails) if emails else 0}, receiver={receiver is not None}")
+        return
+    
+    import base64
+    
+    print(f"🔍 Starting attachment extraction for {len(emails)} emails (account {account_id})")
+    
+    for email_data in emails:
+        if email_data.get('has_attachments') and email_data.get('attachments'):
+            message_id = email_data.get('message_id')
+            gmail_id = email_data.get('gmail_id')  # Use Gmail ID for Gmail API attachments
+            print(f"📧 Email {message_id} has {len(email_data['attachments'])} attachment(s)")
+            
+            for att in email_data['attachments']:
+                # Skip if binary data already present
+                if 'data' in att or 'binary_data' in att:
+                    print(f"⏭️  Skipping {att.get('filename')} - binary data already present")
+                    continue
+                
+                filename = att.get('filename')
+                print(f"🔄 Processing attachment: {filename} (content_type: {att.get('content_type', 'N/A')})")
+                
+                # Use gmail_id if available (Gmail API), otherwise use message_id (IMAP)
+                msg_id_for_attachment = gmail_id if gmail_id else message_id
+                
+                if filename and msg_id_for_attachment:
+                    try:
+                        # Extract attachment binary data from email
+                        print(f"   Calling receiver.get_attachment('{msg_id_for_attachment}', '{filename}')")
+                        attachment_data = receiver.get_attachment(msg_id_for_attachment, filename)
+                        
+                        if attachment_data and 'data' in attachment_data:
+                            # Decode base64 and store as binary_data
+                            # Gmail API uses URL-safe base64, need to convert or use urlsafe_b64decode
+                            att['binary_data'] = base64.urlsafe_b64decode(attachment_data['data'])
+                            
+                            # Update content type if available
+                            if 'content_type' not in att or not att['content_type']:
+                                att['content_type'] = attachment_data.get('content_type', 'application/octet-stream')
+                            
+                            # Extract text content from images (OCR) and PDFs
+                            # This will be included in vector store for semantic search
+                            if 'text_content' not in att or not att.get('text_content'):
+                                try:
+                                    from text_extraction import extract_text_from_attachment
+                                    extracted_text = extract_text_from_attachment(att, att['binary_data'])
+                                    if extracted_text:
+                                        att['text_content'] = extracted_text
+                                        print(f"📝 Extracted text content: {len(extracted_text)} characters from {filename}")
+                                except Exception as text_extract_error:
+                                    # Don't fail if text extraction fails, just log it
+                                    print(f"⚠️  Text extraction failed for {filename}: {text_extract_error}")
+                            
+                            print(f"✅ Extracted attachment: {filename} ({len(att['binary_data'])} bytes) for account {account_id}")
+                        else:
+                            print(f"⚠️  No data returned for {filename}: attachment_data={attachment_data}")
+                    except Exception as e:
+                        print(f"❌ Failed to extract attachment {filename}: {e}")
+                        import traceback
+                        traceback.print_exc()
+                else:
+                    print(f"⚠️  Missing filename or message_id: filename={filename}, message_id={message_id}")
+
+
 # Get emails with automatic batch loading
 @app.get("/api/emails")
 async def get_emails(
+    request: Request,
     limit: int = 1000,  # Max total emails to fetch across all batches
     unread_only: bool = False,
     folder: str = "INBOX",
@@ -832,8 +1058,8 @@ async def get_emails(
         if not email_agent:
             raise HTTPException(status_code=500, detail="Email agent not initialized")
         
-        # Get active account credentials
-        active_account = account_manager.get_active_account()
+        # Get account from session (session-based, not global)
+        active_account = get_account_from_session(request)
         if not active_account:
             return {
                 "success": False,
@@ -938,6 +1164,14 @@ async def get_emails(
                     
                     emails = all_emails
                     print(f"📧 Gmail API batch loading complete: {len(emails)} total emails")
+                    
+                    # Extract attachment binary data for filesystem storage
+                    if emails:
+                        try:
+                            print(f"📎 Extracting attachment binary data for {len(emails)} emails...")
+                            extract_attachment_binary_data(emails, gmail_client, active_account['id'])
+                        except Exception as extract_error:
+                            print(f"⚠️  Error extracting attachments: {extract_error}")
                     
                     # Save emails to MongoDB (synchronously to ensure they're saved before response)
                     mongo_result = {"saved": 0}
@@ -1089,6 +1323,14 @@ async def get_emails(
         emails = all_emails
         print(f"📧 IMAP batch loading complete: {len(emails)} total emails")
         
+        # Extract attachment binary data for filesystem storage
+        if emails:
+            try:
+                print(f"📎 Extracting attachment binary data for {len(emails)} emails...")
+                extract_attachment_binary_data(emails, receiver, active_account['id'])
+            except Exception as extract_error:
+                print(f"⚠️  Error extracting attachments: {extract_error}")
+        
         # Save emails to MongoDB (synchronously to ensure they're saved before response)
         mongo_result = {"saved": 0}
         if emails and mongodb_manager.emails_collection is not None:
@@ -1151,14 +1393,15 @@ async def get_emails(
 
 # Get unread emails
 @app.get("/api/emails/unread")
-async def get_unread_emails(limit: int = 10):
+async def get_unread_emails(request: Request, limit: int = 10):
     """Get unread emails"""
-    return await get_emails(limit=limit, unread_only=True)
+    return await get_emails(request=request, limit=limit, unread_only=True)
 
 
 # Load emails from MongoDB to Vector DB
 @app.post("/api/emails/load-to-vector")
 async def load_emails_to_vector(
+    request: Request,
     limit: int = 1000,
     date_from: Optional[str] = None,
     date_to: Optional[str] = None
@@ -1172,8 +1415,8 @@ async def load_emails_to_vector(
         date_to: Optional end date filter (YYYY-MM-DD)
     """
     try:
-        # Get active account
-        active_account = account_manager.get_active_account()
+        # Get account from session (session-based, not global)
+        active_account = get_account_from_session(request)
         if not active_account:
             raise HTTPException(status_code=400, detail="No active account")
         
@@ -1724,12 +1967,22 @@ async def generate_response(
                 sender_name = sender_email.split('@')[0].replace('.', ' ').replace('_', ' ').title()
                 email_data['sender_name'] = sender_name
                 email_data['reply_account'] = active_account
+                print(f"📝 Set sender_name to '{sender_name}' from account {sender_email}")
             # Get custom prompt for this account
             custom_prompt = active_account.get('custom_prompt', '')
             if custom_prompt and custom_prompt.strip():
                 print(f"📝 Using custom prompt for account {active_account.get('email')}")
             else:
                 print(f"📝 Using default prompt for account {active_account.get('email')}")
+        else:
+            # If no active account, try to get from config as fallback
+            if hasattr(config, 'EMAIL_ADDRESS') and config.EMAIL_ADDRESS:
+                sender_email = config.EMAIL_ADDRESS
+                sender_name = sender_email.split('@')[0].replace('.', ' ').replace('_', ' ').title()
+                email_data['sender_name'] = sender_name
+                print(f"📝 Set sender_name to '{sender_name}' from config {sender_email}")
+            else:
+                print(f"⚠️  WARNING: No active account and no EMAIL_ADDRESS in config - signature may be 'User'")
         
         ai_agent = email_agent.ai_agent
         response_body = ai_agent.generate_response(email_data, tone=tone, custom_prompt=custom_prompt)
@@ -1842,7 +2095,7 @@ async def list_folders():
 # ============================================================================
 
 @app.post("/api/chat/message")
-async def chat_message(request: ChatRequest):
+async def chat_message(request: Request, chat_request: ChatRequest):
     """Send a message to the chat agent with vector search enabled (RAG)"""
     try:
         if not chat_agent:
@@ -1854,8 +2107,8 @@ async def chat_message(request: ChatRequest):
         vector_count = 0
         
         if vector_store.collection:
-            # Check if vector store has emails for the active account
-            active_account = account_manager.get_active_account()
+            # Get account from session (session-based, not global)
+            active_account = get_account_from_session(request)
             if active_account:
                 # Ensure vector store is set to the correct account
                 vector_store.set_account(active_account['id'], active_account.get('email'), skip_count=True)
@@ -1899,10 +2152,11 @@ async def chat_message(request: ChatRequest):
         total_email_count = mongodb_count if mongodb_count > 0 else vector_count
         
         result = chat_agent.chat(
-            request.message, 
-            include_context=request.include_context, 
+            chat_request.message, 
+            include_context=chat_request.include_context, 
             use_vector_search=use_vector,
-            total_email_count=total_email_count
+            total_email_count=total_email_count,
+            account_id=active_account['id'] if active_account else None
         )
         
         return {
@@ -1953,10 +2207,10 @@ async def reset_chat():
 
 
 @app.get("/api/vector/count")
-async def get_vector_count():
+async def get_vector_count(request: Request):
     """Get the count of emails in vector database for the active account"""
     try:
-        active_account = account_manager.get_active_account()
+        active_account = get_account_from_session(request)
         if not active_account:
             print("❌ Vector count: No active account")
             return {
@@ -2191,6 +2445,16 @@ async def delete_account(account_id: int):
         deleted_files = attachment_storage.delete_account_attachments(account_id)
         print(f"✓ Deleted {deleted_files} attachment files for account {account_id}")
         
+        # Delete all sessions for this account
+        deleted_sessions = mongodb_manager.delete_account_sessions(account_id)
+        # Also remove from memory cache
+        sessions_to_remove = [token for token, session in active_sessions.items() 
+                              if session.get('account_id') == account_id]
+        for token in sessions_to_remove:
+            del active_sessions[token]
+        if deleted_sessions > 0:
+            print(f"✓ Deleted {deleted_sessions} sessions for account {account_id}")
+        
         # Finally, delete the account itself
         result = account_manager.remove_account(account_id)
         
@@ -2254,6 +2518,16 @@ async def delete_all_accounts():
                 print(f"✓ Cleared all data from vector store")
             except Exception as e:
                 print(f"⚠️  Error clearing vector store: {e}")
+        
+        # Delete all sessions
+        if mongodb_manager.db is not None:
+            sessions_collection = mongodb_manager.db['sessions']
+            result = sessions_collection.delete_many({})
+            deleted_sessions = result.deleted_count
+            # Also clear memory cache
+            active_sessions.clear()
+            if deleted_sessions > 0:
+                print(f"✓ Deleted {deleted_sessions} sessions")
         
         # Delete all accounts
         accounts_deleted = 0
@@ -2624,8 +2898,13 @@ async def process_existing_emails(limit: int = 10):
                 continue  # Skip already analyzed emails
             
             try:
-                # Run AI analysis
-                analysis = email_agent.ai_agent.analyze_email(email)
+                # Get custom prompt from active account
+                custom_prompt = active_account.get('custom_prompt', '')
+                if custom_prompt and custom_prompt.strip():
+                    print(f"📝 Using custom prompt for analysis (account {active_account.get('email')})")
+                
+                # Run AI analysis with custom prompt
+                analysis = email_agent.ai_agent.analyze_email(email, custom_prompt=custom_prompt)
                 
                 # Save to MongoDB
                 result = mongodb_manager.save_ai_analysis(
@@ -2806,7 +3085,8 @@ async def get_mongodb_emails(
     skip: int = 0,
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
-    unread_only: bool = False
+    unread_only: bool = False,
+    auto_replied_only: bool = False
 ):
     """
     Get emails from MongoDB storage
@@ -2817,6 +3097,7 @@ async def get_mongodb_emails(
         date_from: Start date filter (YYYY-MM-DD)
         date_to: End date filter (YYYY-MM-DD)
         unread_only: Only return unread emails
+        auto_replied_only: Only return emails that have been auto-replied
     """
     import sys
     print(f"🔍 API CALLED: get_mongodb_emails(date_from={date_from}, date_to={date_to}, limit={limit}, skip={skip})", file=sys.stderr, flush=True)
@@ -2863,9 +3144,70 @@ async def get_mongodb_emails(
             if sample_email:
                 print(f"🔍 Sample email in MongoDB: date_str='{sample_email.get('date_str')}', subject='{sample_email.get('subject', 'N/A')[:50]}'")
         
+        # If filtering by auto-replied only, get list of message_ids that have replies
+        replied_message_ids = set()
+        if auto_replied_only:
+            print(f"🔍 Filtering for auto-replied emails only")
+            if mongodb_manager.replies_collection is not None:
+                replied_docs = mongodb_manager.replies_collection.find(
+                    {"account_id": active_account['id']},
+                    {"email_message_id": 1}
+                )
+                replied_message_ids = {doc.get('email_message_id') for doc in replied_docs if doc.get('email_message_id')}
+                print(f"🔍 Found {len(replied_message_ids)} unique email_message_ids in replies collection")
+                
+                if len(replied_message_ids) == 0:
+                    print(f"⚠️  No replies found for account {active_account['id']}, returning empty list")
+                    return {
+                        "success": True,
+                        "emails": [],
+                        "count": 0,
+                        "total": 0,
+                        "skip": skip,
+                        "limit": limit,
+                        "has_more": False
+                    }
+                
+                # Also get all possible message_id formats from emails collection for these replied emails
+                # This handles cases where reply uses one format but email uses another
+                if mongodb_manager.emails_collection is not None:
+                    # Find emails that match any of the replied message_ids
+                    email_docs = mongodb_manager.emails_collection.find(
+                        {
+                            "account_id": active_account['id'],
+                            "$or": [
+                                {"message_id": {"$in": list(replied_message_ids)}},
+                                {"gmail_synthetic_id": {"$in": list(replied_message_ids)}}
+                            ]
+                        },
+                        {"message_id": 1, "gmail_synthetic_id": 1}
+                    )
+                    # Collect all possible IDs for matching
+                    all_possible_ids = set(replied_message_ids)
+                    for email_doc in email_docs:
+                        if email_doc.get('message_id'):
+                            all_possible_ids.add(email_doc.get('message_id'))
+                        if email_doc.get('gmail_synthetic_id'):
+                            all_possible_ids.add(email_doc.get('gmail_synthetic_id'))
+                    replied_message_ids = all_possible_ids
+                    print(f"🔍 Expanded to {len(replied_message_ids)} possible message_id formats for matching")
+            else:
+                print(f"⚠️  Replies collection is None, returning empty list")
+                return {
+                    "success": True,
+                    "emails": [],
+                    "count": 0,
+                    "total": 0,
+                    "skip": skip,
+                    "limit": limit,
+                    "has_more": False
+                }
+        else:
+            print(f"🔍 Showing all emails (not filtering by reply status)")
+        
         emails = mongodb_manager.get_emails(
             account_id=active_account['id'],
-            limit=limit,
+            limit=limit * 3 if auto_replied_only else limit,  # Get more to filter down (in case of format mismatches)
             skip=skip,
             date_from=date_from,
             date_to=date_to,
@@ -2873,11 +3215,23 @@ async def get_mongodb_emails(
             exclude_bodies=True  # Exclude html_body and text_body for faster list loading
         )
         
+        # Filter by reply status if needed
+        if auto_replied_only:
+            original_count = len(emails)
+            emails = [
+                email for email in emails 
+                if (email.get('message_id') in replied_message_ids or 
+                    email.get('gmail_synthetic_id') in replied_message_ids)
+            ]
+            print(f"🔍 Filtered from {original_count} to {len(emails)} auto-replied emails (matched by message_id or gmail_synthetic_id)")
+            # Limit to requested amount after filtering
+            emails = emails[:limit]
+        
         # Get accurate total count with same filters as the query
         if mongodb_manager.emails_collection is not None:
             count_query = {"account_id": active_account['id']}
             
-            # Apply same date filters
+            # Apply same date filters (matching logic from mongodb_manager.get_emails)
             if date_from or date_to:
                 date_query = {}
                 if date_from:
@@ -2887,12 +3241,39 @@ async def get_mongodb_emails(
                     date_obj = datetime.strptime(date_to, "%Y-%m-%d")
                     next_day = date_obj + timedelta(days=1)
                     date_query['$lt'] = next_day.strftime("%Y-%m-%d 00:00:00")
+                
+                # Special handling for "today" (when date_from == date_to)
+                # Use regex to match date prefix - this handles timezone variations better
+                if date_from and date_to and date_from == date_to:
+                    date_prefix = date_from  # e.g., "2025-11-15"
+                    import re as re_module
+                    escaped_prefix = re_module.escape(date_prefix)
+                    date_query = {'$regex': f'^{escaped_prefix}'}
+                    print(f"🔍 Today filter (count): Using regex for date prefix '{date_prefix}'")
+                    
+                    # Debug: Show what dates are available
+                    all_dates = mongodb_manager.emails_collection.distinct("date_str", {"account_id": active_account['id']})
+                    if all_dates:
+                        unique_dates = set()
+                        for dt in all_dates[:20]:
+                            if dt and isinstance(dt, str) and len(dt) >= 10:
+                                unique_dates.add(dt[:10])
+                        print(f"🔍 Available dates in DB: {sorted(list(unique_dates))}")
+                        print(f"🔍 Looking for: '{date_prefix}'")
+                
                 if date_query:
                     count_query['date_str'] = date_query
             
             # Apply unread filter
             if unread_only:
                 count_query['is_read'] = False
+            
+            # Apply auto-replied filter for count (check both message_id formats)
+            if auto_replied_only and replied_message_ids:
+                count_query['$or'] = [
+                    {'message_id': {'$in': list(replied_message_ids)}},
+                    {'gmail_synthetic_id': {'$in': list(replied_message_ids)}}
+                ]
             
             total_count = mongodb_manager.emails_collection.count_documents(count_query)
         else:
@@ -2962,6 +3343,25 @@ async def get_mongodb_emails_count(
                 next_day = date_obj + timedelta(days=1)
                 date_to_end = next_day.strftime("%Y-%m-%d 00:00:00")
                 date_query['$lt'] = date_to_end
+            
+            # Special handling for "today" (when date_from == date_to)
+            # Use regex to match date prefix - this handles timezone variations better
+            if date_from and date_to and date_from == date_to:
+                date_prefix = date_from  # e.g., "2025-11-15"
+                import re as re_module
+                escaped_prefix = re_module.escape(date_prefix)
+                date_query = {'$regex': f'^{escaped_prefix}'}
+                print(f"🔍 Today filter (email count): Using regex for date prefix '{date_prefix}'")
+                
+                # Debug: Show what dates are available
+                all_dates = mongodb_manager.emails_collection.distinct("date_str", {"account_id": target_account['id']})
+                if all_dates:
+                    unique_dates = set()
+                    for dt in all_dates[:20]:
+                        if dt and isinstance(dt, str) and len(dt) >= 10:
+                            unique_dates.add(dt[:10])
+                    print(f"🔍 Available dates in DB: {sorted(list(unique_dates))}")
+                    print(f"🔍 Looking for: '{date_prefix}'")
             
             if date_query:
                 query['date_str'] = date_query
@@ -3182,11 +3582,35 @@ async def notification_stream():
 
 
 @app.get("/api/notifications/stream")
-async def notifications():
+async def notifications(token: str = None):
     """
     Server-Sent Events endpoint for real-time notifications
     Connect to this endpoint to receive push notifications when new emails arrive
+    Requires session token as query parameter for authentication
     """
+    # Validate token
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing authentication token")
+    
+    # Check if token exists in active sessions
+    if token not in active_sessions:
+        # Try to validate token and recreate session
+        try:
+            token_data = session_serializer.loads(token, max_age=604800)  # 7 days
+            account_id = token_data.get('account_id')
+            
+            if account_id:
+                # Recreate session
+                active_sessions[token] = {
+                    'account_id': account_id,
+                    'email': token_data.get('email', ''),
+                    'created_at': datetime.utcnow().isoformat()
+                }
+            else:
+                raise HTTPException(status_code=401, detail="Invalid token")
+        except Exception as e:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+    
     return StreamingResponse(
         notification_stream(),
         media_type="text/event-stream",

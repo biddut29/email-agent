@@ -51,9 +51,18 @@ export default function NotificationListener() {
   }, []);
 
   useEffect(() => {
-    // Connect to SSE endpoint
+    // Get session token from localStorage
+    const token = localStorage.getItem('session_token');
+    
+    if (!token) {
+      console.log('⚠️  No session token found, skipping notification stream connection');
+      setConnected(false);
+      return;
+    }
+    
+    // Connect to SSE endpoint with token as query parameter
     const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-    const es = new EventSource(`${API_BASE_URL}/api/notifications/stream`);
+    const es = new EventSource(`${API_BASE_URL}/api/notifications/stream?token=${encodeURIComponent(token)}`);
 
     es.onopen = () => {
       console.log('✓ Connected to notification stream');

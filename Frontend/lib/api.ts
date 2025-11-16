@@ -342,12 +342,14 @@ class EmailAgentAPI {
     skip: number = 0,
     dateFrom?: string,
     dateTo?: string,
-    unreadOnly: boolean = false
+    unreadOnly: boolean = false,
+    autoRepliedOnly: boolean = false
   ) {
     const params = new URLSearchParams({
       limit: limit.toString(),
       skip: skip.toString(),
       unread_only: unreadOnly.toString(),
+      auto_replied_only: autoRepliedOnly.toString(),
     });
     if (dateFrom) params.append('date_from', dateFrom);
     if (dateTo) params.append('date_to', dateTo);
@@ -819,9 +821,73 @@ class EmailAgentAPI {
     return this.request(`/api/emails/${messageId}/attachments/${encodeURIComponent(savedFilename)}`);
   }
 
-  async downloadAttachment(messageId: string, savedFilename: string): Promise<void> {
-    const url = `${this.baseUrl}/api/emails/${messageId}/attachments/${encodeURIComponent(savedFilename)}/download`;
-    window.open(url, '_blank');
+  async downloadAttachment(messageId: string, savedFilename: string, accountId?: number): Promise<void> {
+    // Validate required parameters
+    if (!messageId) {
+      throw new Error('Message ID is required');
+    }
+    if (!savedFilename || savedFilename === 'undefined') {
+      throw new Error('File ID (saved filename) is required');
+    }
+    
+    // Get account_id from active account if not provided
+    if (!accountId) {
+      const accounts = await this.getAccounts();
+      if (accounts.success && accounts.active_account_id) {
+        accountId = typeof accounts.active_account_id === 'string' 
+          ? parseInt(accounts.active_account_id, 10) 
+          : accounts.active_account_id;
+      } else {
+        throw new Error('No active account found');
+      }
+    }
+    
+    // Use dedicated download endpoint with query parameters
+    const url = `${this.baseUrl}/api/attachments/download?message_id=${encodeURIComponent(messageId)}&account_id=${accountId}&file_id=${encodeURIComponent(savedFilename)}`;
+    
+    try {
+      // Use fetch with credentials to ensure cookies are sent
+      const response = await fetch(url, {
+        method: 'GET',
+        credentials: 'include',
+        headers: {
+          'Accept': '*/*',
+        },
+      });
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: response.statusText }));
+        throw new Error(error.detail || `Failed to download: ${response.status}`);
+      }
+
+      // Get the blob and create a download link
+      const blob = await response.blob();
+      const blobUrl = window.URL.createObjectURL(blob);
+      
+      // Get original filename from Content-Disposition header or use savedFilename
+      const contentDisposition = response.headers.get('Content-Disposition');
+      let filename = savedFilename;
+      if (contentDisposition) {
+        const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/);
+        if (filenameMatch) {
+          filename = filenameMatch[1];
+        }
+      }
+      
+      // Create temporary link and trigger download
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      // Clean up blob URL
+      window.URL.revokeObjectURL(blobUrl);
+    } catch (error: any) {
+      console.error('Download error:', error);
+      throw error;
+    }
   }
 
   async getStorageStats(): Promise<any> {

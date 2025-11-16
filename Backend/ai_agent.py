@@ -7,66 +7,34 @@ from typing import Dict, List, Optional
 import config
 
 # Default prompt template (static instructions part)
-DEFAULT_PROMPT_TEMPLATE = """You are an expert email writing assistant that helps draft natural, conversational email replies. You write in a clear, concise tone that matches the sender's communication style.
+DEFAULT_PROMPT_TEMPLATE = """You are an email auto-reply assistant connected to my inbox.
+Your job is to read the incoming email content and generate a clear, concise, and professional reply.
 
-YOUR TASK:
-Understand the sender's intent (question, request, greeting, information sharing, etc.) and write a natural, direct reply.
+Rules for Generating Replies:
 
-CRITICAL RULES - FOLLOW STRICTLY:
-1. NEVER start with "Thank you for your email" or "Hi [Name], Thank you for your email"
-2. NEVER use "Regarding your question" or "Regarding [topic]"
-3. NEVER use "I received your message" or "Thank you for reaching out"
-4. NEVER use "I see you reached out about..." or "I see you asked about..."
-5. NEVER use "How can I help you today?" or similar customer service phrases
-6. NEVER use "thank you for asking" - just answer directly
-7. NEVER use formal business email templates
-8. ALWAYS answer questions directly and naturally - respond as if in a conversation
-9. Match the sender's tone - if they're casual, be casual; if formal, be professional
-10. Keep responses concise (2-4 sentences) but meaningful
-11. Write as if texting a friend (for casual emails) - be friendly, warm, conversational
-12. If asked "How are you?" → Answer directly: "I'm doing well! How about you?" (NOT "I'm doing well, thank you for asking!")
+1. Keep the reply short, friendly, and professional — 2–5 sentences.
 
-WHAT TO DO:
-- If they ask "How are you?" → Start directly: "I'm doing well, thanks! How about you?"
-- If they ask "where are you?" → Start directly: "I'm here and available. What's up!"
-- If they ask "are you okay?" → Start directly: "Yes, I'm doing great! How are you?" (NO "Thank you for your email" or "Regarding your question")
-- If they ask "what is the status of your health?" → Start directly: "All good here! How are you?"
-- If they ask any question → Answer it directly, don't preface with thank yous or formal greetings
-- If they share news → Acknowledge naturally: "That's great!" or "Thanks for letting me know!"
-- If they greet you → Respond naturally: "Hi! How can I help?" or "Hey! What's up!"
+2. Address the sender's request directly and provide the most relevant response based on the email content.
 
-BAD EXAMPLES (DO NOT DO THIS - THESE ARE WRONG):
-❌ "Hi Biddut Hossain, Thank you for your email. Regarding your question: are you okay? Let me look into that."
-❌ "Hi Biddut Hossain, Thank you for your email. Regarding your question: where are you? Let me look into that."
-❌ "Thank you for reaching out. I received your message about your health status."
-❌ "Hi, Thank you for your email regarding [subject]."
-❌ "I'm doing well, thank you for asking!" (WRONG - too formal)
-❌ "I see you reached out about 'Status'. How can I help you today?" (WRONG - generic customer service)
-❌ "I see you asked about [topic]. Let me help you with that." (WRONG - too formal)
-❌ ANY response that starts with "Thank you for your email", "Regarding your question", "I see you reached out", or "How can I help you today?"
+3. If the message contains multiple questions, answer each briefly in separate sentences.
 
-GOOD EXAMPLES (DO THIS - THESE ARE CORRECT):
-✅ "Yes, I'm doing great! How are you?" (for "are you okay?")
-✅ "I'm here and available. What's up!" (for "where are you?")
-✅ "All good here! How are you?" (for health status questions)
-✅ "I'm doing well! How about you?" (for "how are you?" - direct, no "thank you for asking")
-✅ "Hey! What's up!" (for casual greetings)
-✅ "Everything's good! What do you need?" (for status questions - direct answer)
-✅ "I'm doing well! How can I help?" (for greetings with offers - natural, not customer service tone)
+4. If the email is unclear, politely ask for clarification.
 
-OUTPUT:
-- Write only the email body (no subject line needed - it's a reply)
-- Start your response directly - no formal greetings or thank yous
-- Answer their question or respond to their message immediately
-- Keep it natural and human-like
-- CRITICAL: You MUST end with exactly this format (use actual newlines):
-  [your response text]
-  
-  Best regards,
-  {sender_name}
-- DO NOT write "Best" alone - it must be "Best regards,"
-- DO NOT include email addresses in the signature
-- The words "Best regards," must be on their own line, followed by a newline, then the name"""
+5. If the message is not actionable (spam, promotional, nonsense), respond with a polite general acknowledgment OR return "no-reply-required" if configured.
+
+6. Never hallucinate facts — if you are unsure, ask for more information.
+
+7. Use a neutral tone — no slang, no emojis.
+
+8. Always start with a greeting (e.g., Hi, Hello) and end with a simple sign-off (e.g., Regards).
+
+9. Do not include placeholders like [name] unless the name is present in the email.
+
+IMPORTANT INSTRUCTIONS:
+- Write at least 2-3 sentences of meaningful content that directly addresses the email
+- Do NOT write responses that are only a signature
+- Be conversational but professional
+- Answer questions directly without unnecessary formalities"""
 
 
 class AIAgent:
@@ -536,7 +504,7 @@ Best regards,
             from_email = email_data.get('from', '')
             from_name = from_email.split('<')[0].strip() if '<' in from_email else from_email.split('@')[0]
             
-            # FIRST: Check if sender_name is already in email_data (set by email_agent.py)
+            # FIRST: Check if sender_name is already in email_data (set by email_agent.py or API)
             sender_name = email_data.get('sender_name', '') if isinstance(email_data, dict) else ''
             
             # If sender_name not found, get from email address
@@ -549,11 +517,26 @@ Best regards,
                     reply_account = email_data['reply_account']
                     sender_email = reply_account.get('email', sender_email)
                 
+                # If still no email, try to get from account_manager
+                if not sender_email:
+                    try:
+                        from account_manager import account_manager
+                        active_account = account_manager.get_active_account()
+                        if active_account:
+                            sender_email = active_account.get('email', '')
+                            print(f"📝 Retrieved sender_email from account_manager: {sender_email}")
+                    except Exception as e:
+                        print(f"⚠️  Could not get sender_email from account_manager: {e}")
+                
                 # Extract sender name from email address
                 if sender_email:
                     sender_name = sender_email.split('@')[0].replace('.', ' ').replace('_', ' ').title()
+                    # Store it in email_data for cleanup function
+                    email_data['sender_name'] = sender_name
+                    print(f"📝 Extracted sender_name '{sender_name}' from email '{sender_email}'")
                 else:
                     sender_name = 'User'  # Last resort fallback
+                    print(f"⚠️  WARNING: Could not determine sender_name, using fallback 'User'")
             else:
                 # sender_name already set, get sender_email for logging
                 sender_email = ''
@@ -624,6 +607,29 @@ Response:"""
                     max_tokens=800  # Increased from 400 to allow longer, more detailed responses
                 )
                 response_text = response.choices[0].message.content.strip()
+                
+                # Validate response has meaningful content (not just signature)
+                if len(response_text) < 30 or (len(response_text.split('\n')) <= 2 and 'best regards' in response_text.lower()):
+                    print(f"⚠️  WARNING: AI generated very short response ({len(response_text)} chars). Regenerating...")
+                    # Try once more with a more explicit prompt
+                    retry_prompt = f"""{prompt}
+
+IMPORTANT: Write a meaningful response with at least 2-3 sentences that directly addresses the email. Do not just write a signature."""
+                    try:
+                        retry_response = self.client.chat.completions.create(
+                            model=self.azure_deployment,
+                            messages=[
+                                {"role": "system", "content": system_message},
+                                {"role": "user", "content": retry_prompt}
+                            ],
+                            temperature=1.0,
+                            max_tokens=800
+                        )
+                        response_text = retry_response.choices[0].message.content.strip()
+                        print(f"✅ Retry generated {len(response_text)} characters")
+                    except Exception as retry_e:
+                        print(f"⚠️  Retry failed: {retry_e}, using original response")
+                
                 cleaned_response = self._clean_formal_phrases(response_text, body, email_data)
                 print(f"🔍 After cleanup - Original length: {len(response_text)}, Cleaned length: {len(cleaned_response)}")
                 return cleaned_response
@@ -745,38 +751,44 @@ Response:"""
                 
                 line_lower = line_stripped.lower()
                 
-                # Skip entire lines that contain formal phrases
+                # Skip entire lines that are ONLY formal phrases (not lines that contain other content)
                 skip_line = False
-                for phrase in [
+                # Only skip if the line is primarily a formal phrase (at least 70% of the line)
+                formal_phrases = [
                     'thank you for your email',
                     'thank you for asking',
                     'thanks for asking',
                     'i\'m doing well, thank you for asking',  # Specific pattern from user's example
-                    'hi ', 'hello ', 'dear ',
-                    'regarding',
                     'regarding your question',
-                    'regarding the',
                     'i received your message',
                     'i have received your message',
                     'will respond accordingly',
                     # REMOVED: 'best regards' - we want to keep this for signature
                     'sincerely',
-                    'i see you reached out',
                     'i see you reached out about',  # Specific pattern from user's example
                     'i see you asked about',
-                    'i see you contacted',
-                    'i see you reached',
-                    'reached out about',
-                    'reached out',
                     'let me look into this',
                     'get back to you',
                     'how can i help you today',
                     'how can i help',
-                    'i see you reached out about'  # Ensure this is caught
-                ]:
+                ]
+                
+                # Check if line is primarily a formal phrase (at least 70% of line length)
+                for phrase in formal_phrases:
                     if phrase in line_lower:
+                        phrase_len = len(phrase)
+                        line_len = len(line_lower)
+                        # Only skip if the formal phrase is a significant portion of the line
+                        # OR if the line is very short (likely just the formal phrase)
+                        if phrase_len >= line_len * 0.7 or line_len < 50:
+                            skip_line = True
+                            break
+                
+                # Also skip standalone greetings (Hi/Hello/Dear at start of line with just a name)
+                if not skip_line:
+                    greeting_pattern = r'^(hi|hello|dear)\s+\w+[,\s]*$'
+                    if re.match(greeting_pattern, line_lower):
                         skip_line = True
-                        break
                 
                 if skip_line:
                     continue  # Skip this entire line
@@ -859,6 +871,51 @@ Response:"""
             
             cleaned = cleaned.strip()
             
+            # Step 4.4.5: Safety check - if cleaned response is too short (just signature), preserve more content
+            # If cleaned is less than 50 chars and only contains "Best regards" and name, it's likely too aggressive
+            cleaned_lines = [line.strip() for line in cleaned.split('\n') if line.strip()]
+            has_signature = any('best regards' in line.lower() for line in cleaned_lines)
+            has_content = len([line for line in cleaned_lines if 'best regards' not in line.lower()]) > 0
+            
+            if has_signature and not has_content:
+                print(f"⚠️  WARNING: Cleanup removed all content, only signature remains. Original length: {len(response_text)}")
+                # Try to recover by being less aggressive - keep lines that don't match formal phrases exactly
+                # Re-process but keep lines that have actual content
+                original_lines = response_text.split('\n')
+                recovered_lines = []
+                for line in original_lines:
+                    line_stripped = line.strip()
+                    if not line_stripped:
+                        continue
+                    line_lower = line_stripped.lower()
+                    # Only skip if it's EXACTLY a formal phrase, not if it contains other content
+                    is_only_formal = any(line_lower == phrase or line_lower.startswith(phrase + ' ') for phrase in [
+                        'thank you for your email',
+                        'thank you for asking',
+                        'regarding your question',
+                        'i received your message',
+                        'how can i help you today',
+                    ])
+                    if not is_only_formal and 'best regards' not in line_lower:
+                        recovered_lines.append(line_stripped)
+                
+                if recovered_lines:
+                    recovered = '\n'.join(recovered_lines)
+                    # Only do minimal cleanup on recovered content
+                    recovered = re.sub(r'^(Hi|Hello|Dear)\s+\w+[,\s]*\n?', '', recovered, flags=re.IGNORECASE | re.MULTILINE)
+                    recovered = re.sub(r'Thank\s+you\s+for\s+your\s+email[.,]?\s*$', '', recovered, flags=re.IGNORECASE)
+                    recovered = recovered.strip()
+                    
+                    # Add signature if not present
+                    if 'best regards' not in recovered.lower():
+                        if sender_name:
+                            recovered = f"{recovered}\n\nBest regards,\n{sender_name}"
+                        else:
+                            recovered = f"{recovered}\n\nBest regards,\nUser"
+                    
+                    print(f"✅ Recovered response with {len(recovered)} characters")
+                    cleaned = recovered
+            
             # Step 4.5: Replace any placeholders like "[Your Name]" with actual sender name
             # Get sender name from email_data parameter if available
             sender_name = ''
@@ -908,19 +965,41 @@ Response:"""
             
             # Step 4.7: Replace "User" with actual sender name (AFTER all other formatting)
             # This must happen after Step 4.6 to ensure it doesn't get overwritten
-            # If sender_name is still not found or is "User", try one more time to get it
+            # ALWAYS try to get sender_name, even if it was 'User' before
             if not sender_name or sender_name == 'User':
-                # Try to get from account_manager if available (for API calls)
-                try:
-                    from account_manager import account_manager
-                    active_account = account_manager.get_active_account()
-                    if active_account:
-                        sender_email = active_account.get('email', '')
+                # First try email_data
+                if email_data is not None:
+                    temp_sender_name = email_data.get('sender_name', '') if isinstance(email_data, dict) else ''
+                    
+                    # If not found, try to get from reply_account
+                    if (not temp_sender_name or temp_sender_name == 'User') and 'reply_account' in email_data and email_data.get('reply_account'):
+                        reply_account = email_data['reply_account']
+                        sender_email = reply_account.get('email', '')
                         if sender_email:
-                            sender_name = sender_email.split('@')[0].replace('.', ' ').replace('_', ' ').title()
-                            print(f"🔧 Cleanup: Retrieved sender name from account_manager: '{sender_name}'")
-                except Exception as e:
-                    print(f"⚠️  Cleanup: Could not get sender name from account_manager: {e}")
+                            temp_sender_name = sender_email.split('@')[0].replace('.', ' ').replace('_', ' ').title()
+                            print(f"🔧 Cleanup: Retrieved sender name from reply_account: '{temp_sender_name}'")
+                    
+                    if temp_sender_name and temp_sender_name != 'User':
+                        sender_name = temp_sender_name
+                
+                # If still not found, try account_manager
+                if not sender_name or sender_name == 'User':
+                    try:
+                        from account_manager import account_manager
+                        active_account = account_manager.get_active_account()
+                        if active_account:
+                            sender_email = active_account.get('email', '')
+                            if sender_email:
+                                sender_name = sender_email.split('@')[0].replace('.', ' ').replace('_', ' ').title()
+                                print(f"🔧 Cleanup: Retrieved sender name from account_manager: '{sender_name}'")
+                    except Exception as e:
+                        print(f"⚠️  Cleanup: Could not get sender name from account_manager: {e}")
+                
+                # Last resort: try config
+                if (not sender_name or sender_name == 'User') and hasattr(config, 'EMAIL_ADDRESS') and config.EMAIL_ADDRESS:
+                    sender_email = config.EMAIL_ADDRESS
+                    sender_name = sender_email.split('@')[0].replace('.', ' ').replace('_', ' ').title()
+                    print(f"🔧 Cleanup: Retrieved sender name from config: '{sender_name}'")
             
             # Always try to replace "User" if we have a valid sender name
             if sender_name and sender_name != 'User':
@@ -937,10 +1016,17 @@ Response:"""
                     last_user_pos = cleaned_stripped.lower().rfind('user')
                     if last_user_pos != -1:
                         # Replace from the position of "user" to the end
-                        cleaned = cleaned_stripped[:last_user_pos] + sender_name
+                        before_user = cleaned_stripped[:last_user_pos].rstrip()
+                        # Check if there's "Best regards," before it
+                        if before_user.lower().endswith('best regards,'):
+                            cleaned = before_user + '\n' + sender_name
+                        else:
+                            cleaned = before_user + '\n' + sender_name
                 # Final check: if response ends with just "User" (any case) on its own line, replace it
                 cleaned = re.sub(r'\n\s*[Uu][Ss][Ee][Rr]\s*$', f'\n{sender_name}', cleaned, flags=re.MULTILINE)
-                print(f"🔧 Replaced 'User' with sender name: '{sender_name}'")
+                print(f"🔧 Cleanup: Replaced 'User' with '{sender_name}' in signature")
+            elif sender_name == 'User':
+                print(f"⚠️  Cleanup: Could not determine sender name, signature remains 'User'")
             elif cleaned and 'User' in cleaned:
                 # Even if we don't have a valid sender name, try to get it one more time
                 print(f"⚠️  Cleanup: Found 'User' in response but sender_name is '{sender_name}' - attempting to retrieve...")
@@ -978,12 +1064,13 @@ Response:"""
             traceback.print_exc()
             return response_text
     
-    def analyze_email(self, email_data: Dict) -> Dict:
+    def analyze_email(self, email_data: Dict, custom_prompt: Optional[str] = None) -> Dict:
         """
         Comprehensive AI analysis of an email
         
         Args:
             email_data: Email data dictionary
+            custom_prompt: Optional custom prompt to use when generating suggested_response
             
         Returns:
             Dict with comprehensive analysis including category, urgency, spam detection, summary, etc.
@@ -1029,7 +1116,10 @@ Response:"""
             
             if should_generate_response:
                 try:
-                    suggested_response = self.generate_response(email_data, tone="professional")
+                    # Use custom_prompt if provided
+                    suggested_response = self.generate_response(email_data, tone="professional", custom_prompt=custom_prompt)
+                    if custom_prompt and custom_prompt.strip():
+                        print(f"📝 Generated suggested_response using custom prompt")
                 except Exception as e:
                     print(f"⚠️  Response generation failed: {e}")
                     suggested_response = ""

@@ -263,7 +263,7 @@ class EmailAgent:
                                 # Process new emails (send notifications for all, auto-reply for all accounts)
                                 if new_emails:
                                     is_active_account = (account_id == active_account_id)
-                                    self._process_new_emails(new_emails, account_id, check_interval, should_auto_reply=True)  # All accounts should auto-reply
+                                    self._process_new_emails(new_emails, account_id, check_interval, should_auto_reply=True, receiver=gmail_client)  # All accounts should auto-reply
                                 
                             except Exception as e:
                                 print(f"⚠ Gmail API monitoring error for {account_email}: {e}")
@@ -317,7 +317,7 @@ class EmailAgent:
                                 # Process new emails (send notifications for all, auto-reply for all accounts)
                                 if new_emails:
                                     is_active_account = (account_id == active_account_id)
-                                    self._process_new_emails(new_emails, account_id, check_interval, should_auto_reply=True)  # All accounts should auto-reply
+                                    self._process_new_emails(new_emails, account_id, check_interval, should_auto_reply=True, receiver=receiver)  # All accounts should auto-reply
                             except Exception as e:
                                 print(f"⚠ IMAP monitoring error for {account_email}: {e}")
                                 continue
@@ -337,7 +337,7 @@ class EmailAgent:
         
         print("📡 Monitoring loop stopped")
     
-    def _process_new_emails(self, new_emails: List[Dict], account_id: Optional[int], check_interval: int, should_auto_reply: bool = True):
+    def _process_new_emails(self, new_emails: List[Dict], account_id: Optional[int], check_interval: int, should_auto_reply: bool = True, receiver=None):
         """Process new emails (save, analyze, notify)
         
         Args:
@@ -345,11 +345,58 @@ class EmailAgent:
             account_id: Account ID that received these emails
             check_interval: Monitoring check interval (unused, kept for compatibility)
             should_auto_reply: Whether to send auto-replies (only True for active account)
+            receiver: EmailReceiver or GmailAPIClient instance for extracting attachments
         """
         if not new_emails:
             return
         
         print(f"📨 Found {len(new_emails)} new email(s) for account {account_id}!")
+        
+        # Extract attachment binary data before saving (if receiver is available)
+        # Use the shared function from api_server to ensure consistency with manual load
+        if receiver and account_id:
+            try:
+                # Import at function level to avoid circular import issues
+                from api_server import extract_attachment_binary_data
+                extract_attachment_binary_data(new_emails, receiver, account_id)
+                print(f"📎 Extracted attachments for {len(new_emails)} email(s) using shared function")
+            except ImportError as import_error:
+                # Fallback to inline extraction if import fails (shouldn't happen, but safety)
+                print(f"⚠️  Could not import extract_attachment_binary_data: {import_error}")
+                print(f"⚠️  Falling back to inline extraction...")
+                try:
+                    import base64
+                    print(f"🔍 Starting attachment extraction for {len(new_emails)} emails (account {account_id})")
+                    
+                    for email_data in new_emails:
+                        if email_data.get('has_attachments') and email_data.get('attachments'):
+                            message_id = email_data.get('message_id')
+                            gmail_id = email_data.get('gmail_id')
+                            print(f"📧 Email {message_id} has {len(email_data['attachments'])} attachment(s)")
+                            
+                            for att in email_data['attachments']:
+                                if 'data' in att or 'binary_data' in att:
+                                    continue
+                                
+                                filename = att.get('filename')
+                                msg_id_for_attachment = gmail_id if gmail_id else message_id
+                                
+                                if filename and msg_id_for_attachment:
+                                    try:
+                                        attachment_data = receiver.get_attachment(msg_id_for_attachment, filename)
+                                        if attachment_data and 'data' in attachment_data:
+                                            att['binary_data'] = base64.urlsafe_b64decode(attachment_data['data'])
+                                            if 'content_type' not in att or not att['content_type']:
+                                                att['content_type'] = attachment_data.get('content_type', 'application/octet-stream')
+                                            print(f"✅ Extracted attachment: {filename}")
+                                    except Exception as e:
+                                        print(f"❌ Failed to extract attachment {filename}: {e}")
+                except Exception as fallback_error:
+                    print(f"⚠️  Fallback extraction also failed: {fallback_error}")
+            except Exception as e:
+                print(f"⚠️  Error extracting attachments during auto-pull: {e}")
+                import traceback
+                traceback.print_exc()
         
         # Save to MongoDB if available
         if self.mongodb_manager and self.mongodb_manager.emails_collection is not None and account_id:
@@ -357,15 +404,57 @@ class EmailAgent:
             if result.get('success'):
                 print(f"💾 Saved {result.get('total', 0)} new emails to MongoDB")
         
+        # Add emails to vector store for semantic search (async, don't block)
+        try:
+            from vector_store import vector_store
+            if new_emails and vector_store.collection and account_id:
+                # Get account email for filtering sent emails
+                account_email = None
+                if self.account_manager:
+                    account = self.account_manager.get_account(account_id)
+                    if account:
+                        account_email = account.get('email')
+                
+                # Ensure vector store is set to the correct account
+                vector_store.set_account(account_id, account_email, skip_count=True)
+                
+                def add_to_vector_async():
+                    try:
+                        print(f"🔄 Starting async vector store update for {len(new_emails)} emails (auto-pull)...")
+                        result = vector_store.add_emails(new_emails, account_email=account_email)
+                        added = result.get('added', 0)
+                        skipped = result.get('skipped', 0)
+                        total = result.get('total', 0)
+                        print(f"✅ Vector store update complete (auto-pull): Added {added} emails, Skipped {skipped} sent emails, Total in store: {total} (account_id: {account_id})")
+                    except Exception as e:
+                        print(f"❌ Error adding emails to vector store during auto-pull: {e}")
+                        import traceback
+                        traceback.print_exc()
+                
+                # Start async vector store update
+                vector_thread = threading.Thread(target=add_to_vector_async, daemon=True)
+                vector_thread.start()
+        except Exception as e:
+            print(f"⚠️  Error initializing vector store update during auto-pull: {e}")
+        
         # Run AI analysis if enabled (asynchronously to not block monitoring)
         if self.ai_enabled and self.ai_agent:
             # Process AI analysis in background thread to not block monitoring loop
             import threading
             def analyze_emails_async():
+                # Get custom prompt from account if available
+                custom_prompt = None
+                if account_id and self.account_manager:
+                    account = self.account_manager.get_account(account_id)
+                    if account:
+                        custom_prompt = account.get('custom_prompt', '')
+                        if custom_prompt and custom_prompt.strip():
+                            print(f"📝 Using custom prompt for AI analysis (account {account.get('email')})")
+                
                 for email in new_emails:
                     try:
                         print(f"🤖 Analyzing email: {email.get('subject', 'No subject')[:50]}")
-                        analysis = self.ai_agent.analyze_email(email)
+                        analysis = self.ai_agent.analyze_email(email, custom_prompt=custom_prompt)
                         email['ai_analysis'] = analysis
                         
                         # Save AI analysis to separate collection in MongoDB
@@ -931,10 +1020,9 @@ class EmailAgent:
         try:
             from_address = email.get('from', '')
             subject = email.get('subject', 'No Subject')
-            suggested_response = analysis.get('suggested_response', '')
             
-            if not from_address or not suggested_response:
-                print("⚠️  Missing from_address or suggested_response")
+            if not from_address:
+                print("⚠️  Missing from_address")
                 return
             
             # Get the account that received the email (not the active account)
@@ -966,6 +1054,30 @@ class EmailAgent:
                 # Clear OAuth credentials if not available
                 self.sender.oauth_credentials = None
                 self.sender.gmail_service = None
+            
+            # Generate response using custom prompt if available
+            # Get custom prompt from the account
+            custom_prompt = None
+            if reply_account:
+                custom_prompt = reply_account.get('custom_prompt', '')
+                if custom_prompt and custom_prompt.strip():
+                    print(f"📝 Using custom prompt for auto-reply from account {reply_account.get('email')}")
+                else:
+                    print(f"📝 Using default prompt for auto-reply from account {reply_account.get('email')}")
+            
+            # Add sender information to email for proper signature generation
+            email['sender_name'] = reply_account['email'].split('@')[0].replace('.', ' ').replace('_', ' ').title() if reply_account else 'User'
+            email['reply_account'] = reply_account
+            
+            # Generate fresh response with custom prompt (don't use suggested_response from analysis)
+            print(f"🤖 Generating auto-reply response with {'custom' if custom_prompt else 'default'} prompt...")
+            response_body = self.ai_agent.generate_response(email, tone="professional", custom_prompt=custom_prompt)
+            
+            if not response_body or len(response_body.strip()) < 10:
+                print(f"⚠️  Generated response too short, using fallback response")
+                # Fallback to a simple acknowledgment
+                sender_name = reply_account['email'].split('@')[0].replace('.', ' ').replace('_', ' ').title() if reply_account else 'User'
+                response_body = f"Thank you for your email.\n\nBest regards,\n{sender_name}"
             
             # Compose reply
             reply_subject = f"Re: {subject}" if not subject.lower().startswith('re:') else subject
@@ -1017,10 +1129,11 @@ class EmailAgent:
             print(f"📤 Sending auto-reply to: {from_address}")
             print(f"   From account: {self.sender.email_address}")
             print(f"   Threading: message_id={normalized_message_id}, thread_id={thread_id if thread_id else 'N/A'}")
+            print(f"   Response length: {len(response_body)} characters")
             success = self.sender.send_email(
                 to=from_address,
                 subject=reply_subject,
-                body=suggested_response,
+                body=response_body,
                 html=False,
                 in_reply_to=normalized_message_id if normalized_message_id else None,  # Threading header
                 references=normalized_message_id if normalized_message_id else None,   # Threading header
@@ -1036,7 +1149,7 @@ class EmailAgent:
                         reply_data = {
                             'to': from_address,
                             'subject': reply_subject,
-                            'body': suggested_response,
+                            'body': response_body,
                             'success': True,
                             'sent_at': datetime.now().isoformat()
                         }
