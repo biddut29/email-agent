@@ -949,7 +949,7 @@ async def get_current_user(request: Request, session_token: Optional[str] = Cook
 
 @app.post("/api/auth/logout")
 async def logout(request: Request, response: Response, session_token: Optional[str] = Cookie(None)):
-    """Logout user and clear session data"""
+    """Logout user and clear session data, including OAuth token revocation"""
     # Try to get token from cookie or request state
     token = session_token
     if not token:
@@ -957,15 +957,46 @@ async def logout(request: Request, response: Response, session_token: Optional[s
     
     if token:
         print(f"🚪 Logging out - Deleting session: {token[:20]}...")
+        # Get session data before deleting
+        session_data = active_sessions.get(token, {})
+        account_email = session_data.get('email', 'unknown')
+        account_id = session_data.get('account_id')
+        
+        # Revoke OAuth token if it exists (forces Google to show account picker on next login)
+        if account_id and session_data.get('credentials'):
+            try:
+                account = account_manager.get_account(account_id)
+                if account and account.get('oauth_credentials'):
+                    from google.oauth2.credentials import Credentials
+                    from google_auth_oauthlib.flow import Flow
+                    import json
+                    
+                    # Try to revoke the OAuth token
+                    try:
+                        creds_dict = account.get('oauth_credentials', {})
+                        if isinstance(creds_dict, str):
+                            creds_dict = json.loads(creds_dict)
+                        
+                        if creds_dict.get('token'):
+                            # Revoke the token
+                            import requests
+                            revoke_url = 'https://oauth2.googleapis.com/revoke'
+                            requests.post(revoke_url, params={'token': creds_dict.get('token')}, timeout=5)
+                            print(f"   OAuth token revoked for {account_email}")
+                    except Exception as revoke_error:
+                        print(f"   ⚠️ Could not revoke OAuth token (non-critical): {revoke_error}")
+            except Exception as e:
+                print(f"   ⚠️ Error during OAuth revocation (non-critical): {e}")
+        
         # Delete from memory
         if token in active_sessions:
-            account_email = active_sessions[token].get('email', 'unknown')
             print(f"   Removing from memory for account: {account_email}")
             del active_sessions[token]
+        
         # Delete from MongoDB
         mongodb_manager.delete_session(token)
         print(f"   Session deleted from MongoDB")
-        print(f"✅ Logout complete - Session cleared")
+        print(f"✅ Logout complete - Session cleared for {account_email}")
     else:
         print(f"⚠️ Logout called but no session token found")
     

@@ -58,6 +58,13 @@ class AuthManager:
             state=state
         )
         
+        # Add a unique timestamp parameter to force Google to show account picker
+        # This prevents Google from auto-selecting the last used account
+        import time
+        timestamp = int(time.time() * 1000)  # Milliseconds for uniqueness
+        separator = '&' if '?' in authorization_url else '?'
+        authorization_url = f"{authorization_url}{separator}_t={timestamp}"
+        
         print(f"🔑 Generated OAuth URL with account selection prompt: {authorization_url[:100]}...")
         
         return authorization_url, generated_state
