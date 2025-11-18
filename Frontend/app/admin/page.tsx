@@ -54,6 +54,7 @@ export default function AdminPage() {
   const [globalAutoReply, setGlobalAutoReply] = useState(false);
   const [cleaningVector, setCleaningVector] = useState(false);
   const [deletingAll, setDeletingAll] = useState(false);
+  const [clearingMongoDB, setClearingMongoDB] = useState(false);
   const [editingPromptAccountId, setEditingPromptAccountId] = useState<number | null>(null);
   const [customPromptValue, setCustomPromptValue] = useState<string>('');
 
@@ -321,6 +322,58 @@ export default function AdminPage() {
     }
   };
 
+  const handleClearAllMongoDB = async () => {
+    const confirmMessage = `⚠️ DANGER: This will PERMANENTLY DELETE ALL MongoDB data:\n\n` +
+      `- ALL emails\n` +
+      `- ALL replies\n` +
+      `- ALL AI analysis\n` +
+      `- ALL sessions\n` +
+      `- ALL accounts\n` +
+      `- ALL app_config\n` +
+      `- ALL vector database data\n` +
+      `- ALL attachments\n\n` +
+      `This action CANNOT be undone!\n\n` +
+      `Type "CLEAR ALL" to confirm:`;
+    
+    const userInput = prompt(confirmMessage);
+    
+    if (userInput !== "CLEAR ALL") {
+      alert("Deletion cancelled. You must type 'CLEAR ALL' to confirm.");
+      return;
+    }
+
+    setClearingMongoDB(true);
+    try {
+      const data = await api.clearAllMongoDBData();
+      
+      if (data.success) {
+        alert(
+          `All MongoDB data cleared successfully!\n\n` +
+          `- Emails: ${data.emails_deleted}\n` +
+          `- Replies: ${data.replies_deleted}\n` +
+          `- AI Analysis: ${data.analysis_deleted}\n` +
+          `- Sessions: ${data.sessions_deleted}\n` +
+          `- Accounts: ${data.accounts_deleted}\n` +
+          `- App Config: ${data.app_config_deleted}\n` +
+          `- Attachments: ${data.attachments_deleted}\n` +
+          `- Vector DB: ${data.vector_cleared ? 'Cleared' : 'Not cleared'}\n\n` +
+          `You will be logged out and redirected to login page.`
+        );
+        
+        // Clear local storage and redirect to login
+        localStorage.clear();
+        sessionStorage.clear();
+        window.location.href = '/login';
+      } else {
+        throw new Error(data.message || 'Failed to clear MongoDB data');
+      }
+    } catch (error) {
+      console.error('Error clearing MongoDB data:', error);
+      alert(`Failed to clear MongoDB data: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      setClearingMongoDB(false);
+    }
+  };
+
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
     return date.toLocaleDateString('en-US', {
@@ -399,6 +452,24 @@ export default function AdminPage() {
                 <>
                   <Trash2 className="w-4 h-4 mr-2" />
                   Delete All Accounts
+                </>
+              )}
+            </Button>
+            <Button 
+              onClick={handleClearAllMongoDB} 
+              variant="destructive"
+              disabled={clearingMongoDB}
+              className="text-white hover:text-white bg-red-600 hover:bg-red-700"
+            >
+              {clearingMongoDB ? (
+                <>
+                  <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                  Clearing...
+                </>
+              ) : (
+                <>
+                  <Database className="w-4 h-4 mr-2" />
+                  Clear All MongoDB Data
                 </>
               )}
             </Button>

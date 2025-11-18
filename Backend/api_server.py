@@ -2702,6 +2702,104 @@ async def delete_all_accounts():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.delete("/api/mongodb/clear-all")
+async def clear_all_mongodb_data():
+    """Clear ALL MongoDB data (emails, replies, AI analysis, sessions, accounts, app_config)"""
+    try:
+        print("🗑️  Starting deletion of ALL MongoDB data...")
+        
+        results = {
+            "emails_deleted": 0,
+            "replies_deleted": 0,
+            "analysis_deleted": 0,
+            "sessions_deleted": 0,
+            "accounts_deleted": 0,
+            "app_config_deleted": 0
+        }
+        
+        # Clear emails collection
+        if mongodb_manager.emails_collection is not None:
+            result = mongodb_manager.emails_collection.delete_many({})
+            results["emails_deleted"] = result.deleted_count
+            print(f"✓ Deleted {results['emails_deleted']} emails from MongoDB")
+        
+        # Clear replies collection
+        if mongodb_manager.replies_collection is not None:
+            result = mongodb_manager.replies_collection.delete_many({})
+            results["replies_deleted"] = result.deleted_count
+            print(f"✓ Deleted {results['replies_deleted']} replies from MongoDB")
+        
+        # Clear AI analysis collection
+        if mongodb_manager.ai_analysis_collection is not None:
+            result = mongodb_manager.ai_analysis_collection.delete_many({})
+            results["analysis_deleted"] = result.deleted_count
+            print(f"✓ Deleted {results['analysis_deleted']} AI analyses from MongoDB")
+        
+        # Clear sessions collection
+        if mongodb_manager.db is not None:
+            sessions_collection = mongodb_manager.db['sessions']
+            result = sessions_collection.delete_many({})
+            results["sessions_deleted"] = result.deleted_count
+            # Also clear memory cache
+            active_sessions.clear()
+            print(f"✓ Deleted {results['sessions_deleted']} sessions from MongoDB")
+            
+            # Clear app_config collection if it exists
+            if 'app_config' in mongodb_manager.db.list_collection_names():
+                app_config_collection = mongodb_manager.db['app_config']
+                result = app_config_collection.delete_many({})
+                results["app_config_deleted"] = result.deleted_count
+                print(f"✓ Deleted {results['app_config_deleted']} app_config entries from MongoDB")
+        
+        # Get all accounts before deletion to count and delete attachments
+        all_accounts = account_manager.get_all_accounts()
+        account_ids = [acc['id'] for acc in all_accounts]
+        
+        # Clear all attachments
+        total_attachments_deleted = 0
+        for account_id in account_ids:
+            deleted_files = attachment_storage.delete_account_attachments(account_id)
+            total_attachments_deleted += deleted_files
+        if total_attachments_deleted > 0:
+            print(f"✓ Deleted {total_attachments_deleted} attachment files")
+        
+        # Clear accounts collection
+        if account_manager.accounts_collection is not None:
+            result = account_manager.clear_all_accounts()
+            if result.get('success'):
+                results["accounts_deleted"] = len(account_ids)
+                print(f"✓ Deleted {results['accounts_deleted']} accounts from MongoDB")
+        
+        # Clear vector store
+        vector_cleared = False
+        if vector_store.collection:
+            try:
+                vector_store.client.delete_collection(name="emails")
+                vector_store.collection = vector_store.client.get_or_create_collection(
+                    name="emails",
+                    metadata={"description": "Email semantic search with account isolation"}
+                )
+                vector_cleared = True
+                print(f"✓ Cleared all data from vector store")
+            except Exception as e:
+                print(f"⚠️  Error clearing vector store: {e}")
+        
+        print(f"✅ All MongoDB data cleared")
+        
+        return {
+            "success": True,
+            "message": "All MongoDB data cleared successfully",
+            **results,
+            "attachments_deleted": total_attachments_deleted,
+            "vector_cleared": vector_cleared
+        }
+    except Exception as e:
+        print(f"❌ Error clearing MongoDB data: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.put("/api/accounts/{account_id}/activate")
 async def activate_account(account_id: int, toggle: bool = True):
     """Set an account as active (toggle mode by default - allows multiple active accounts)"""

@@ -903,6 +903,24 @@ class EmailAgentAPI {
   async getStorageStats(): Promise<any> {
     return this.request('/api/storage/stats');
   }
+
+  // Clear all MongoDB data
+  async clearAllMongoDBData() {
+    return this.request<{
+      success: boolean;
+      message: string;
+      emails_deleted: number;
+      replies_deleted: number;
+      analysis_deleted: number;
+      sessions_deleted: number;
+      accounts_deleted: number;
+      app_config_deleted: number;
+      attachments_deleted: number;
+      vector_cleared: boolean;
+    }>('/api/mongodb/clear-all', {
+      method: 'DELETE',
+    });
+  }
 }
 
 export const api = new EmailAgentAPI();
