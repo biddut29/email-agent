@@ -197,12 +197,29 @@ class EmailAgent:
                                             # Update stored credentials
                                             updated_creds_dict = auth_mgr.credentials_to_dict(creds)
                                             self.account_manager.update_account_oauth_credentials(account_id, updated_creds_dict)
+                                            print(f"✓ OAuth token refreshed for {account_email} during initialization")
                                         except Exception as refresh_e:
-                                            print(f"⚠ Failed to refresh OAuth token for {account_email}: {refresh_e}")
-                                            continue
+                                            error_msg = str(refresh_e)
+                                            # Check if token is permanently expired/revoked
+                                            if 'invalid_grant' in error_msg or 'expired' in error_msg.lower() or 'revoked' in error_msg.lower():
+                                                print(f"❌ OAuth token permanently expired/revoked for {account_email}. Account needs re-authentication.")
+                                                print(f"   Please re-authenticate this account through the admin panel or login page.")
+                                                continue  # Skip this account
+                                            else:
+                                                print(f"⚠ Failed to refresh OAuth token for {account_email}: {refresh_e}")
+                                                continue  # Skip if refresh fails
+                                    
+                                    # Verify credentials are valid before proceeding
+                                    if not creds or not creds.valid:
+                                        print(f"⚠ Invalid credentials for {account_email}, skipping initialization...")
+                                        continue
                                     
                                     # Build Gmail service
-                                    gmail_service = build('gmail', 'v1', credentials=creds)
+                                    try:
+                                        gmail_service = build('gmail', 'v1', credentials=creds)
+                                    except Exception as build_e:
+                                        print(f"⚠ Failed to build Gmail service for {account_email}: {build_e}")
+                                        continue
                                     
                                     # Create Gmail client
                                     gmail_client = GmailAPIClient(account_email)
@@ -213,12 +230,20 @@ class EmailAgent:
                                     try:
                                         profile = gmail_service.users().getProfile(userId='me').execute()
                                         gmail_client.history_id = profile.get('historyId')
+                                        print(f"✓ Gmail API client initialized for {account_email}")
                                     except Exception as profile_e:
-                                        print(f"⚠ Failed to get Gmail profile for {account_email}: {profile_e}")
-                                        gmail_client.history_id = None
+                                        error_msg = str(profile_e)
+                                        # Check if it's an authentication error
+                                        if 'invalid_grant' in error_msg or 'expired' in error_msg.lower() or 'revoked' in error_msg.lower():
+                                            print(f"❌ Authentication failed for {account_email} during profile fetch: {error_msg}")
+                                            print(f"   Account needs re-authentication. Skipping this account.")
+                                            continue  # Skip this account
+                                        else:
+                                            print(f"⚠ Failed to get Gmail profile for {account_email}: {profile_e}")
+                                            gmail_client.history_id = None
+                                            # Continue anyway - might work without history_id
                                     
                                     gmail_clients[account_id] = gmail_client
-                                    print(f"✓ Gmail API client initialized for {account_email}")
                                 
                                 gmail_client = gmail_clients[account_id]
                                 
@@ -232,17 +257,48 @@ class EmailAgent:
                                         self.account_manager.update_account_oauth_credentials(account_id, updated_creds_dict)
                                         # Rebuild service with refreshed credentials
                                         gmail_client.service = build('gmail', 'v1', credentials=gmail_client.creds)
+                                        print(f"✓ OAuth token refreshed for {account_email}")
                                     except Exception as refresh_e:
-                                        print(f"⚠ Failed to refresh OAuth token for {account_email}: {refresh_e}")
+                                        error_msg = str(refresh_e)
+                                        # Check if token is permanently expired/revoked
+                                        if 'invalid_grant' in error_msg or 'expired' in error_msg.lower() or 'revoked' in error_msg.lower():
+                                            print(f"❌ OAuth token permanently expired/revoked for {account_email}. Account needs re-authentication.")
+                                            print(f"   Please re-authenticate this account through the admin panel or login page.")
+                                            # Remove from monitoring to avoid repeated errors
+                                            if account_id in gmail_clients:
+                                                del gmail_clients[account_id]
+                                            continue  # Skip this account
+                                        else:
+                                            print(f"⚠ Failed to refresh OAuth token for {account_email}: {refresh_e}")
+                                            # Continue anyway - might be a temporary issue
+                                
+                                # Verify credentials are still valid before using
+                                if not gmail_client.creds or not gmail_client.creds.valid:
+                                    print(f"⚠ Invalid credentials for {account_email}, skipping...")
+                                    continue
                                 
                                 # Get new emails using Gmail API
-                                if gmail_client.history_id:
-                                    new_emails = gmail_client.get_new_emails(limit=10)
-                                    print(f"🔍 Gmail API (history): Found {len(new_emails) if new_emails else 0} emails for {account_email}")
-                                else:
-                                    # Fallback: get recent emails if history_id not available
-                                    new_emails = gmail_client.get_emails(limit=10, query='in:inbox is:unread')
-                                    print(f"🔍 Gmail API (fallback): Found {len(new_emails) if new_emails else 0} emails for {account_email}")
+                                try:
+                                    if gmail_client.history_id:
+                                        new_emails = gmail_client.get_new_emails(limit=10)
+                                        print(f"🔍 Gmail API (history): Found {len(new_emails) if new_emails else 0} emails for {account_email}")
+                                    else:
+                                        # Fallback: get recent emails if history_id not available
+                                        new_emails = gmail_client.get_emails(limit=10, query='in:inbox is:unread')
+                                        print(f"🔍 Gmail API (fallback): Found {len(new_emails) if new_emails else 0} emails for {account_email}")
+                                except Exception as email_error:
+                                    error_msg = str(email_error)
+                                    # Check if it's an authentication error
+                                    if 'invalid_grant' in error_msg or 'expired' in error_msg.lower() or 'revoked' in error_msg.lower():
+                                        print(f"❌ Authentication failed for {account_email}: {error_msg}")
+                                        print(f"   Account needs re-authentication. Removing from monitoring.")
+                                        # Remove from monitoring
+                                        if account_id in gmail_clients:
+                                            del gmail_clients[account_id]
+                                        continue  # Skip this account
+                                    else:
+                                        # Re-raise other errors to be caught by outer exception handler
+                                        raise
                                 
                                 # Filter to only new emails (check against MongoDB)
                                 if new_emails and self.mongodb_manager:

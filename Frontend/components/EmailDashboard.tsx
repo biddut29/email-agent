@@ -328,12 +328,35 @@ export default function EmailDashboard() {
 
     setDeletingAccount(true);
     try {
-      const activeAccount = await api.getActiveAccount();
-      if (!activeAccount.success || !activeAccount.account) {
-        throw new Error('No active account found');
+      // Get account ID from current user session first
+      let accountId: number | null = null;
+      
+      try {
+        const currentUser = await api.getCurrentUser();
+        if (currentUser.success && currentUser.user?.account_id) {
+          accountId = currentUser.user.account_id;
+        }
+      } catch (e) {
+        console.warn('Could not get account from session:', e);
+      }
+      
+      // Fallback to active account if session lookup failed
+      if (!accountId) {
+        const activeAccount = await api.getActiveAccount();
+        if (activeAccount.success && activeAccount.account) {
+          accountId = activeAccount.account.id;
+        }
+      }
+      
+      // Fallback to currentAccountId state if available
+      if (!accountId && currentAccountId) {
+        accountId = currentAccountId;
+      }
+      
+      if (!accountId) {
+        throw new Error('No account found. Please ensure you are logged in.');
       }
 
-      const accountId = activeAccount.account.id;
       const result = await api.deleteAccount(accountId);
 
       if (result.success) {
